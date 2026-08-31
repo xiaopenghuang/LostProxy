@@ -98,12 +98,32 @@ function configMatches(config: chrome.proxy.ProxyConfig | undefined, expected: S
    * 浏览器 get() 回来的字符串可能被规范化（空白、换行），
    * 全文相等会产生误判，而误判的后果是 UI 显示"状态不一致"的假警报。
    */
-  if (expected.routingMode === 'smart' && config.mode === 'pac_script') {
+  /*
+   * 🔴 先判「我们期望的是哪种 mode」，再拿它与实际 mode 比对。
+   *
+   * 此方最初写成 `if (expected.routingMode === 'smart' && config.mode === 'pac_script')`，
+   * 那是个真 bug：smart 且有规则时我们期望 pac_script，但若浏览器实际停在
+   * fixed_servers（写入被别的东西覆盖、或写入根本没发生），
+   * 这个条件不成立，于是**穿透到下面的 fixed_servers 比较**并因为
+   * host/port 恰好相同而返回 true。
+   *
+   * 后果正是本项目最不能出的那种：`proxyActuallySet` 报 true，
+   * UI 显示"智能分流已生效、状态一致"，而浏览器其实在把**所有**流量
+   * 送进代理 —— 包括本该直连的校内站点。用户看不出任何异常。
+   *
+   * 现在改成 mode 必须相符：期望 pac_script 却拿到别的，就是不一致。
+   */
+  const expectedConfig = buildProxyConfig(expected)
+
+  if (config.mode !== expectedConfig.mode) return false
+
+  if (expectedConfig.mode === 'pac_script') {
+    // 只比对「脚本里确实出现了我们的代理地址」，不做全文比较 ——
+    // 浏览器 get() 回来的字符串可能被规范化（空白、换行），
+    // 全文相等会产生误判，而误判的后果是 UI 显示"状态不一致"的假警报。
     const data = config.pacScript?.data ?? ''
     return data.includes(`${expected.proxyHost}:${expected.proxyPort}`)
   }
-
-  if (config.mode !== 'fixed_servers') return false
 
   const server = config.rules?.singleProxy
   if (!server) return false

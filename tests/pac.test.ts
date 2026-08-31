@@ -32,6 +32,8 @@ function evaluatePac(script: string, host: string): string {
 }
 
 const PROXY = 'PROXY 127.0.0.1:7890'
+/** 真实场景那一组用的端口（对应实测环境的 mixed-port）。 */
+const PROXY_2080 = 'PROXY 127.0.0.1:2080'
 
 describe('sanitizeRule', () => {
   it.each([
@@ -179,5 +181,40 @@ describe('脚本内容的结构性保证', () => {
   it('carries the configured host and port', () => {
     const script = buildPacScript('10.0.0.5', 1080, [])
     expect(evaluatePac(script, 'example.com')).toBe('PROXY 10.0.0.5:1080')
+  })
+})
+
+describe('真实校园域名（Master 实测场景）', () => {
+  /*
+   * 这一组用的是真实报告过问题的域名形状。
+   *
+   * 加它的理由：此方原有的匹配测试用的是 `a.edu.cn` 这类构造样本，
+   * 而 Master 实际遇到的是 `www.swpu.edu.cn` —— 三段子域 + 顶级 `.cn`。
+   * 构造样本通过不等于真实形状通过，而排查时最先要排除的就是
+   * 「是不是匹配逻辑对这种形状失效」。
+   */
+  const script = buildPacScript('127.0.0.1', 2080, ['*.edu.cn'])
+
+  it.each([
+    ['www.swpu.edu.cn', 'DIRECT'],
+    ['swpu.edu.cn', 'DIRECT'],
+    ['lib.swpu.edu.cn', 'DIRECT'],
+    // 更深的子域也该命中，教务/图书馆系统常用四段。
+    ['jwc.web.swpu.edu.cn', 'DIRECT'],
+  ])('%s → %s', (host, expected) => {
+    expect(evaluatePac(script, host)).toBe(expected)
+  })
+
+  it('a more specific rule also works', () => {
+    const narrow = buildPacScript('127.0.0.1', 2080, ['*.swpu.edu.cn'])
+    expect(evaluatePac(narrow, 'www.swpu.edu.cn')).toBe('DIRECT')
+    // 收窄到本校后，其他学校不再直连 —— 这是收窄规则的预期代价。
+    expect(evaluatePac(narrow, 'www.pku.edu.cn')).toBe(PROXY_2080)
+  })
+
+  it('🔴 an empty rule list must not accidentally send campus traffic direct', () => {
+    // 反向哨兵：若空清单意外变成"全部直连"，上面那些断言会失去意义。
+    const none = buildPacScript('127.0.0.1', 2080, [])
+    expect(evaluatePac(none, 'www.swpu.edu.cn')).toBe(PROXY_2080)
   })
 })

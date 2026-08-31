@@ -23,7 +23,7 @@ import {
   normalizeProxyError,
   registerProxyErrorListener,
 } from '../src/background/proxy'
-import { DEFAULT_SETTINGS } from '../src/shared/constants'
+import { DEFAULT_SETTINGS, PROXY_BYPASS_LIST } from '../src/shared/constants'
 import type { NormalizedError, Settings } from '../src/shared/types'
 import { emitProxyError, proxyErrorListenerCount, proxySetting } from './setup'
 
@@ -369,5 +369,64 @@ describe('buildProxyConfig · 分流模式', () => {
     // "PROXY x; DIRECT" 会让代理连不上时静默直连。
     const data = smart(['*.edu.cn']).pacScript?.data ?? ''
     expect(data).not.toMatch(/PROXY[^"']*;\s*DIRECT/)
+  })
+})
+
+describe('🔴 inspectProxy · 期望的 mode 与实际 mode 必须相符', () => {
+  const smartSettings = {
+    ...DEFAULT_SETTINGS,
+    routingMode: 'smart' as const,
+    directRules: ['*.edu.cn'],
+  }
+
+  it('🔴 does not report a match when smart expects PAC but the browser is on fixed_servers', async () => {
+    /*
+     * 这是此方写错过的那个 bug，也是本项目最不能出的失败形态。
+     *
+     * 原实现的条件是 `expected.routingMode === 'smart' && config.mode === 'pac_script'`。
+     * 浏览器停在 fixed_servers 时该条件不成立，于是穿透到下面的
+     * fixed_servers 比较，并因为 host/port 恰好相同而返回 true ——
+     * `proxyActuallySet` 报 true，UI 显示"智能分流已生效、状态一致"，
+     * 而浏览器其实在把所有流量送进代理，包括本该直连的校内站点。
+     *
+     * 关键在于：出这个 bug 时，原有的全部测试都是绿的。
+     */
+    proxySetting.value = {
+      mode: 'fixed_servers',
+      rules: {
+        singleProxy: { scheme: 'http', host: DEFAULT_SETTINGS.proxyHost, port: DEFAULT_SETTINGS.proxyPort },
+        bypassList: [...PROXY_BYPASS_LIST],
+      },
+    }
+
+    const inspection = await inspectProxy(smartSettings)
+
+    expect(inspection.matchesExpected).toBe(false)
+  })
+
+  it('reports a match when smart is actually on PAC with our address', async () => {
+    proxySetting.value = buildProxyConfig(smartSettings)
+
+    expect((await inspectProxy(smartSettings)).matchesExpected).toBe(true)
+  })
+
+  it('🔴 does not report a match when global expects fixed_servers but the browser is on PAC', async () => {
+    // 反方向同样要堵：切回全局后若 PAC 还挂着，那也是状态不一致。
+    proxySetting.value = buildProxyConfig(smartSettings)
+
+    const inspection = await inspectProxy({ ...DEFAULT_SETTINGS, routingMode: 'global' })
+
+    expect(inspection.matchesExpected).toBe(false)
+  })
+
+  it('still matches fixed_servers when smart has no usable rules', async () => {
+    /*
+     * smart 且无规则时 buildProxyConfig 退回 fixed_servers，
+     * 所以此时浏览器在 fixed_servers 才是**正确**的 —— 不能误报不一致。
+     */
+    const noRules = { ...DEFAULT_SETTINGS, routingMode: 'smart' as const, directRules: [] }
+    proxySetting.value = buildProxyConfig(noRules)
+
+    expect((await inspectProxy(noRules)).matchesExpected).toBe(true)
   })
 })
