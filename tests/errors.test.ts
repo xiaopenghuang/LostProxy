@@ -59,7 +59,7 @@ const EXPECTED_SELF_HEALING: Record<ErrorCode, boolean> = {
    *
    * 两者都是「用户改一下就好」的配置/授权问题，不是瞬时故障：
    *   - PROXY_PRIVATE_BROWSING_REQUIRED：用户去 about:addons 勾一个框；
-   *   - ROUTING_MODE_UNSUPPORTED：用户把分流模式切回全局。
+   *   - ROUTING_PERMISSION_REQUIRED：用户在权限弹窗里允许，或改用全局。
    *
    * 让它们自愈是错的方向。自愈的判据是「状态恢复后这条记录还有没有价值」，
    * 而这两条记录的价值恰恰在于**告诉用户要去做什么**。悄悄清掉的结果是
@@ -69,7 +69,7 @@ const EXPECTED_SELF_HEALING: Record<ErrorCode, boolean> = {
    * 也就是浏览器仍在直连。告警留着是唯一能让用户知道这件事的途径。
    */
   PROXY_PRIVATE_BROWSING_REQUIRED: false,
-  ROUTING_MODE_UNSUPPORTED: false,
+  ROUTING_PERMISSION_REQUIRED: false,
   UNKNOWN: false,
 }
 

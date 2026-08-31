@@ -150,8 +150,8 @@ const EN = {
     'WebRTC policy is controlled by policy and cannot be changed by any extension.',
   'error.privateBrowsingAccessRequired':
     'Firefox will not let LostProxy change proxy settings until you allow it to run in private windows. Open about:addons, click LostProxy, and turn on "Run in Private Windows". Proxy settings apply to private and normal windows alike, which is why Firefox asks first.',
-  'error.ruleBasedRoutingUnsupported':
-    'Firefox cannot do rule-based routing in this version of LostProxy: it has no support for inline PAC scripts, so your direct-connection list would be silently ignored. Switch Routing to Global, or put the direct rules in your Mihomo config instead — the core handles them better anyway.',
+  'error.routingPermissionRequired':
+    'Smart routing needs permission to see which sites you visit. Firefox has no inline PAC support, so LostProxy has to decide per request — which means the browser asks it about every URL. Without that permission your direct-connection list would be silently ignored, so LostProxy will not enable instead. Either allow it when asked, or put those rules in your Mihomo config — the core handles them better anyway.',
   'error.proxyBlocked':
     'Cannot reach the local proxy. Your real IP was not exposed — the request was blocked. Check that Mihomo is running and that its mixed-port matches the proxy address shown above.',
   'error.proxyLeakSuspected':
@@ -387,8 +387,8 @@ const ZH: Record<MessageKey, string> = {
   'error.privacyNotControllable': 'WebRTC 策略被策略（Policy）锁定，任何扩展都无法修改。',
   'error.privateBrowsingAccessRequired':
     'Firefox 不允许 LostProxy 修改代理设置，除非你允许它在隐私窗口中运行。打开 about:addons，点开 LostProxy，把「在隐私窗口中运行」打开。代理设置对隐私窗口和普通窗口同时生效，所以 Firefox 会先问一次。',
-  'error.ruleBasedRoutingUnsupported':
-    'Firefox 在当前版本的 LostProxy 里无法做规则分流：它不支持内联 PAC 脚本，硬写会让你的直连清单被无声忽略。请把分流模式切回「全局」，或者把这些直连规则写进 Mihomo 配置 —— 内核本来就比浏览器更擅长做这件事。',
+  'error.routingPermissionRequired':
+    '智能分流需要「访问所有网站」的权限。Firefox 不支持内联 PAC 脚本，所以分流必须由 LostProxy 逐个请求判断 —— 也就是浏览器会把每个网址问一遍。没有这个权限，你的直连清单会被无声忽略，所以 LostProxy 选择不开启。要么在弹窗里允许，要么把这些规则写进 Mihomo 配置 —— 内核本来就比浏览器更擅长做这件事。',
   'error.proxyBlocked':
     '连不上本机代理。你的真实 IP 没有泄漏 —— 该请求已被阻止。请确认 Mihomo 正在运行，且它的混合端口与上面显示的代理地址一致。',
   'error.proxyLeakSuspected':

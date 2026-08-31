@@ -11,7 +11,7 @@
 ![Manifest](https://img.shields.io/badge/Manifest-V3-4285F4?logo=googlechrome&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8%20(Rolldown)-646CFF?logo=vite&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-994%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1047%20passing-brightgreen)
 
 [![Release](https://img.shields.io/github/v/release/xiaopenghuang/LostProxy?label=download&color=success)](https://github.com/xiaopenghuang/LostProxy/releases/latest)
 
@@ -202,7 +202,7 @@ npm run build
 | 扩展平台 | Manifest V3（`proxy` + `storage` + `privacy` 权限） |
 | 语言 | TypeScript 7（native/Go 编译器） |
 | 构建 | Vite 8（Rolldown），手写配置，两趟输出 |
-| 测试 | Vitest 4，994 项，含 `chrome.*` 手写 mock |
+| 测试 | Vitest 4，1047 项，含 `chrome.*` 手写 mock |
 | 界面 | 原生 HTML/CSS，无 UI 框架；Fluent Design 视觉语言 |
 | i18n | 自实现，EN 词典为单一真源，缺翻译是编译期错误 |
 
@@ -227,7 +227,7 @@ src/
   shared/       types / constants / errors / i18n / messages
   manifest.json         Chromium（service_worker）
   manifest.firefox.json Firefox（scripts + gecko id）
-tests/          994 项单元测试与两套 chrome API mock
+tests/          1047 项单元测试与两套 chrome API mock
 scripts/        打包、发布说明、图标生成
 ```
 
@@ -249,7 +249,7 @@ storage 重读。业务决策不散落在 `proxy.ts` 里，集中在 `orchestrat
 ## 测试
 
 ```bash
-npm run test        # 994 项，约 0.5s
+npm run test        # 1047 项，约 0.5s
 npm run verify      # typecheck + test + build
 ```
 
@@ -291,23 +291,48 @@ LostProxy ON 时必须满足： Edge 出口 IP ≠ Chrome 出口 IP
   `tools/conflict-test-extension/` 真机验过 —— 一个只申请 `proxy` 权限、不发任何网络请求的
   三十行夹具，因为原先推荐的 SwitchyOmega 已停止维护、且在现在的 Chromium 上无法运行。
 
-### Firefox 版另有三条
+### Firefox 版的差异
 
-- **不支持智能分流**（浏览器内的直连规则清单）。Firefox 的 `proxy.settings` 只支持
-  `autoConfigUrl`，没有内联 PAC，硬做会引入「取不到脚本就静默直连」这个失败模式 ——
-  与本项目的 fail-closed 取向正好相反。开着分流模式时扩展会**拒绝开启并说明原因**，
-  而不是悄悄按全局代理处理（后者会让你配的直连清单被无声忽略）。
+功能与 Edge / Chrome 版**一致** —— 代理开关、节点切换、延迟测试、智能分流、
+订阅刷新、WebRTC 锁全部可用。但有三处行为差异，都源自浏览器 API 本身：
 
-  把这些规则写进 Mihomo 配置反而更好：内核的规则系统支持 GEOIP、IP-CIDR、进程名、
-  规则集订阅，比浏览器 PAC 强得多。后续版本会用 `proxy.onRequest` 实现，
-  那条路顺带把 PAC 的字符串注入面整个消掉。
-- **运行时错误信号更弱**：Firefox 的 `proxy.onError` 不带 `fatal` 字段，
-  因此无法像 Chromium 那样区分「请求被拦住了（没泄漏）」与「已经直连出去了（可能泄漏）」。
-  此时的取向是报一条可自愈的告警、不对是否泄漏做任何承诺 —— 而不是一律按最坏情况报警，
-  因为那会训练用户去点掉这类告警，连真正的泄漏警告也一起点掉。
-- **真机隔离测试尚未完成。** Chromium 侧已实测两个浏览器不同出口 ASN；
-  Firefox 侧目前只有单元测试覆盖（含产物级断言），**尚未在真机上验证出口隔离**。
-  这是已知的待验项，不是已知的保证。
+**1. 智能分流需要一个额外权限，且只在你要用时才问。**
+
+Firefox 的代理 API 不支持内联 PAC 脚本，所以分流走的是另一条路
+（`proxy.onRequest`）：浏览器对**每个请求**问扩展一次「走代理还是直连」。
+这意味着扩展能看到你访问的每一个网址 —— 所以 Firefox 必须先征得你同意。
+
+第一次把分流模式切成「智能」时会弹一次授权请求。不给就继续用全局代理，
+给了之后随时能在 `about:addons` 里收回。
+
+> **为什么不在安装时一次要掉**：默认只要 `http://127.0.0.1/*` 本身是这个项目的
+> 一项卖点 —— 权限面小意味着即便扩展被攻破，能拿到的东西也有限。
+> 让只用全局代理的人替一个可选功能付这个代价是亏的。
+
+顺带一提，那条路**比 PAC 更干净**：规则从来不变成代码，所以 Chromium 版里那整套
+PAC 注入防御（字符白名单、`JSON.stringify` 序列化、纯 ASCII 校验）在 Firefox 上
+根本不需要。
+
+**2. 需要授予「在隐私窗口中运行」。**
+
+Firefox 规定代理设置对隐私窗口与普通窗口同时生效，因此不给这个权限就
+**完全不允许**扩展改代理。没给时扩展会明确告诉你去哪儿开，不会假装已经开好了。
+
+反过来说，Chromium 上靠 `scope: 'regular'` 换来的「InPrivate 窗口也走代理、
+不泄漏」在 Firefox 上是**默认行为** —— 代价就是这个前置授权。
+
+**3. 运行时错误信号更弱。**
+
+Firefox 的 `proxy.onError` 不带 `fatal` 字段，因此无法像 Chromium 那样区分
+「请求被拦住了（没泄漏）」与「已经直连出去了（可能泄漏）」。此时的取向是
+报一条可自愈的告警、不对是否泄漏做任何承诺 —— 而不是一律按最坏情况报警，
+因为那会训练用户去点掉这类告警，连真正的泄漏警告一起点掉。
+
+**4. 真机隔离测试尚未完成。**
+
+Chromium 侧已实测两个浏览器不同出口 ASN；Firefox 侧目前只有单元测试覆盖
+（含产物级断言），**尚未在真机上验证出口隔离与 fail-closed**。
+这是已知的待验项，不是已知的保证。`docs/test-plan.md` §6.5 列了要验什么。
 
 ## 路线图
 

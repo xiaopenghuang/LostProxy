@@ -365,6 +365,7 @@ describe('platform 契约的运行期完整性', () => {
     'readWebRtcState',
     'lockWebRtcPolicy',
     'unlockWebRtcPolicy',
+    'registerListeners',
   ])('platform.%s 是一个函数', (method) => {
     expect(typeof platform[method as keyof typeof platform]).toBe('function')
   })

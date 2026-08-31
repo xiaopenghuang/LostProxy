@@ -116,13 +116,17 @@ export type ErrorCode =
    */
   | 'PROXY_PRIVATE_BROWSING_REQUIRED'
   /**
-   * 该平台做不到浏览器内规则分流（Firefox 不支持内联 PAC）。
+   * 规则分流需要一个用户还没授予的可选权限（Firefox 的 `<all_urls>`）。
    *
    * 🔴 必须**拒绝开启**而不是退回全局代理。退回全局在网络上"能用"，
    *   但会静默丢掉用户配的直连清单 —— 他本该直连的校内站点全部走了代理，
    *   而 UI 显示一切正常。这不是"没保护"，是"保护成了另一种样子"。
+   *
+   * 出现这个码时我们**已经尝试过弹窗索取**（`ensureSupported`），
+   * 所以它意味着用户看到弹窗后选择了拒绝 —— 文案要尊重这个选择，
+   * 不能写成"你必须给"，而是说明不给的话可以怎么办。
    */
-  | 'ROUTING_MODE_UNSUPPORTED'
+  | 'ROUTING_PERMISSION_REQUIRED'
   /**
    * onProxyError 且 `fatal: true` —— 请求被**阻止**，真实 IP 未泄漏。
    * 属于瞬时故障：状态恢复后应当自动消失（architecture.md ADR-22）。

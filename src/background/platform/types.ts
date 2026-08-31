@@ -84,10 +84,21 @@ export type PlatformId = 'chromium' | 'firefox'
  *   而不是落进一个 `default:` 分支里变成「未知错误」。
  */
 export type PlatformBlocker =
-  /** 用户还没授予私密窗口访问权（Firefox）。**这是用户可自行修复的**。 */
+  /** 用户还没授予隐私窗口访问权（Firefox）。**这是用户可自行修复的**。 */
   | 'privateBrowsingAccessRequired'
-  /** 该平台做不到浏览器内规则分流（Firefox 没有内联 PAC）。 */
-  | 'ruleBasedRoutingUnsupported'
+  /**
+   * 规则分流需要一个用户还没授予的可选权限（Firefox 的 `<all_urls>`）。
+   *
+   * 🔴 与 `privateBrowsingAccessRequired` 分开，因为**修复方式不同**：
+   *   那一条要用户自己去 about:addons 点，我们只能给指引；
+   *   这一条我们可以**主动弹出授权请求**（`permissions.request()`），
+   *   用户点一下就好。报成同一条会白白让用户多走一趟。
+   *
+   * 之所以是可选权限而不是必需：见 `firefox.ts` 里 `ALL_URLS` 的注释 ——
+   * 默认权限面小对一个代理工具本身就是卖点，
+   * 不该让只用全局代理的人替一个可选功能付这个代价。
+   */
+  | 'routingPermissionRequired'
 
 /**
  * 浏览器代理设置的巡检结果。
@@ -149,8 +160,8 @@ export interface BrowserPlatform {
    *
    * 🔴 与 `preflight` 刻意分成两个方法，因为它们回答的是不同的问题：
    *
-   *   - `supports`  → 「这份配置在这个浏览器上**有意义吗**」（静态能力）
-   *   - `preflight` → 「**现在**允许我写吗」（动态授权）
+   *   - `supports`  → 「这份配置在这个浏览器上**能用吗**」（跟着配置走）
+   *   - `preflight` → 「**现在**允许我写吗」（跟着浏览器授权走）
    *
    * 此方最初把两者混成一个 `preflight(settings)`，那是个真 bug：
    * 保存设置时若也调它，一个没授予隐私窗口权限的 Firefox 用户会
@@ -159,13 +170,35 @@ export interface BrowserPlatform {
    * 让开关永远点不动的设置（真机上踩到的死角）。
    *
    * 拆开之后各归各位：
-   *   - 保存设置时只查 `supports` —— 不让用户存下一份这个浏览器做不到的配置
+   *   - 保存设置时只查 `supports` —— 不让用户存下一份这个浏览器用不了的配置
    *   - 开启代理时查两者
    *
-   * 声明为**同步**：它是一个纯粹的能力判断，不该有 IO。做成 async 会诱使
-   * 将来有人在这里发请求，而「保存设置」这条路径上多一次网络等待是没道理的。
+   * ⚠️ 是 **async**，因为在 Firefox 上它要查一个可选权限授没授
+   *    （`permissions.contains`）。此方最初把它设计成同步的纯能力判断，
+   *    那在只考虑「内联 PAC 支不支持」时够用；引入可选权限之后就不够了 ——
+   *    「能不能用」现在同时取决于平台能力**和**用户给没给权限。
+   *
+   *    实现里不许在这条路上发**网络**请求：它在保存设置时会被调用，
+   *    而那条路径上等一次网络是没道理的。`permissions.contains`
+   *    是本地查询，不算。
    */
-  supports(settings: Settings): PlatformBlocker | null
+  supports(settings: Settings): Promise<PlatformBlocker | null>
+
+  /**
+   * 尝试获得这份配置所需的可选权限。返回是否已具备。
+   *
+   * 🔴 **必须由用户手势触发**（点击事件的调用栈里）。
+   *   Firefox 的 `permissions.request()` 在没有用户手势时直接拒绝 ——
+   *   所以这个方法只能从「用户点了开关/切了模式」这条路径上调，
+   *   不能放进 `reconcile()` 之类的后台流程里。
+   *
+   * 与 `supports` 分开而不是让它自己去要权限：`supports` 会在
+   * 保存设置、开启代理、渲染状态等多处被调用，其中大部分**不是**用户手势，
+   * 而一个会弹窗的查询函数在那些地方是灾难。查询与索取必须分开。
+   *
+   * 没有可选权限概念的平台（Chromium）直接返回 true。
+   */
+  requestPermissions(settings: Settings): Promise<boolean>
 
   /**
    * **现在**能不能写。返回 `null` 表示能。
@@ -241,4 +274,32 @@ export interface BrowserPlatform {
 
   /** 解锁：释放控制权（同样是 `clear()` 语义，不是写 `'default'`）。 */
   unlockWebRtcPolicy(): Promise<void>
+
+  /**
+   * 注册平台需要在**顶层同步**挂上的长期监听。
+   *
+   * ⚠️ 调用方必须在背景脚本的顶层同步调用，与 `onProxyError` 同理。
+   *
+   * ## 为什么这个钩子存在
+   *
+   * Firefox 的智能分流走 `proxy.onRequest` —— 一个每请求都要回答的监听。
+   * 它**必须**顶层注册：Firefox 的 MV3 背景是事件页，空闲约 30 秒就卸载，
+   * 而从业务流程（比如"用户点了开启"）里挂上的监听会随之消失，
+   * 且没人重挂 —— 用户的直连清单于是静默失效。
+   *
+   * 此方最初把它挂在 `applyProxy` 里，正是这个错。`index.ts` 自己的文件头
+   * 就写着这条铁律，而此方违反了它。
+   *
+   * Chromium 不需要这个（PAC 由浏览器自己执行），实现为空。
+   *
+   * @param stateReader 现读「开关状态 + 当前设置」。由调用方注入，
+   *   因为平台层不该依赖 storage（模块边界）。
+   *
+   *   开关状态**必须**给：只给 settings 会漏掉一个反方向的欺骗 ——
+   *   代理关掉后 `routingMode` 与规则并不会变，监听于是继续把流量
+   *   送进代理，而 UI 显示已关闭。
+   */
+  registerListeners(
+    stateReader: () => Promise<{ enabled: boolean; settings: Settings }>,
+  ): void
 }

@@ -227,13 +227,20 @@ export const chromium: BrowserPlatform = {
   id: 'chromium',
 
   /**
-   * Chromium 支持全部配置形态。
+   * Chromium 支持全部配置形态，且不需要任何额外权限。
    *
-   * 内联 PAC 原生支持，所以规则分流可用 —— 这正是 `firefox.ts` 里
-   * 那条限制在这边不存在的原因。
+   * 内联 PAC 原生支持，所以规则分流开箱可用 —— PAC 脚本在浏览器自己的
+   * 沙箱里执行，扩展看不到请求内容，因此浏览器不必为此索取权限。
+   * 这正是 Firefox 那边要 `<all_urls>` 而这边不用的根本原因：
+   * 那条路上每个请求都要**问扩展一次**。
    */
-  supports(): PlatformBlocker | null {
+  async supports(): Promise<PlatformBlocker | null> {
     return null
+  },
+
+  /** 没有可选权限要要 —— 安装时那三项就是全部。 */
+  async requestPermissions(): Promise<boolean> {
+    return true
   },
 
   /**
@@ -328,4 +335,13 @@ export const chromium: BrowserPlatform = {
   async unlockWebRtcPolicy(): Promise<void> {
     await chrome.privacy.network.webRTCIPHandlingPolicy.clear({ scope: SETTING_SCOPE })
   },
+
+  /**
+   * Chromium 不需要顶层长期监听。
+   *
+   * 分流由浏览器执行我们生成的 PAC 脚本完成 —— 脚本随 chrome.proxy 设置
+   * 一起存活，与 Service Worker 的生命周期无关。这正是 PAC 相比
+   * onRequest 的一个实际优势：没有监听丢了这种失效模式。
+   */
+  registerListeners(): void {},
 }

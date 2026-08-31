@@ -11,7 +11,7 @@
 ![Manifest](https://img.shields.io/badge/Manifest-V3-4285F4?logo=googlechrome&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8%20(Rolldown)-646CFF?logo=vite&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-994%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1047%20passing-brightgreen)
 
 [![Release](https://img.shields.io/github/v/release/xiaopenghuang/LostProxy?label=download&color=success)](https://github.com/xiaopenghuang/LostProxy/releases/latest)
 
@@ -228,7 +228,7 @@ namespace).
 | Extension platform | Manifest V3 (`proxy` + `storage` + `privacy` permissions) |
 | Language | TypeScript 7 (native/Go compiler) |
 | Build | Vite 8 (Rolldown), hand-written config, two output passes |
-| Tests | Vitest 4, 994 tests, hand-written `chrome.*` mocks |
+| Tests | Vitest 4, 1047 tests, hand-written `chrome.*` mocks |
 | UI | Plain HTML/CSS, no UI framework; Fluent Design visual language |
 | i18n | Hand-rolled; the EN dictionary is the single source of truth, so a missing translation is a compile error |
 
@@ -253,7 +253,7 @@ src/
   shared/       types / constants / errors / i18n / messages
   manifest.json         Chromium (service_worker)
   manifest.firefox.json Firefox (scripts + gecko id)
-tests/          994 unit tests and two sets of chrome API mocks
+tests/          1047 unit tests and two sets of chrome API mocks
 scripts/        packaging, release notes, icon generation
 ```
 
@@ -277,7 +277,7 @@ throws, so nobody can quietly start writing to it later.
 ## Tests
 
 ```bash
-npm run test        # 994 tests, ~0.5s
+npm run test        # 1047 tests, ~0.5s
 npm run verify      # typecheck + test + build
 ```
 
@@ -327,27 +327,54 @@ The three traps that cost the most time during development, all hit for real:
   network requests, because the SwitchyOmega this originally pointed at is discontinued and no
   longer runs on current Chromium.
 
-### Three more for the Firefox build
+### Differences in the Firefox build
 
-- **No rule-based routing** (the in-browser direct-connection list). Firefox's `proxy.settings`
-  supports only `autoConfigUrl`, with no inline PAC, and forcing it would reintroduce the
-  "script unreachable → silent DIRECT" failure mode — the opposite of this project's fail-closed
-  stance. With smart routing enabled the extension **refuses to turn on and explains why**, rather
-  than quietly falling back to global (which would leave your direct list silently ignored).
+Feature parity with Edge/Chrome — proxy toggle, node switching, latency testing,
+smart routing, subscription refresh and the WebRTC lock all work. Four
+differences remain, all rooted in the browser APIs themselves:
 
-  Putting those rules in your Mihomo config is better anyway: the core's rule engine handles GEOIP,
-  IP-CIDR, process names and rule-set subscriptions, far beyond what browser PAC can do. A later
-  version will use `proxy.onRequest`, which also eliminates the PAC string-injection surface
-  entirely.
-- **Weaker runtime error signal**: Firefox's `proxy.onError` carries no `fatal` field, so unlike
-  Chromium it cannot distinguish "the request was blocked (no leak)" from "it went out direct
-  (possible leak)". The chosen stance is to raise a self-healing alert that promises nothing about
-  whether a leak occurred — rather than always assuming the worst, which would train users to
-  dismiss this class of alert and take the real leak warnings down with it.
-- **Real-machine isolation testing is not done.** Two-browser egress ASN separation is verified on
-  Chromium; the Firefox side currently has unit-test coverage only (including bundle-level
-  assertions) and **has not been verified on a real machine**. A known open item, not a known
-  guarantee.
+**1. Smart routing needs one extra permission, asked for only when you use it.**
+
+Firefox's proxy API has no inline PAC support, so routing goes through
+`proxy.onRequest` instead: the browser asks the extension about **every request**
+whether to proxy it. That means the extension can see every URL you visit — which
+is why Firefox insists on asking first.
+
+The prompt appears the first time you switch routing to Smart. Decline and global
+proxying keeps working; accept and you can revoke it any time in `about:addons`.
+
+> **Why not request it at install time**: needing only `http://127.0.0.1/*` by
+> default is a feature of this project — a small permission surface means a
+> compromised extension has little to take. Charging that to people who only want
+> global proxying, for an optional feature, is a bad trade.
+
+Incidentally that path is **cleaner than PAC**: rules never become code, so the
+entire PAC injection defence in the Chromium build (character allowlist,
+`JSON.stringify` serialisation, pure-ASCII check) is simply unnecessary here.
+
+**2. Private-window access must be granted.**
+
+Firefox proxy settings apply to private and normal windows alike, so without that
+permission the browser does not let an extension change them at all. LostProxy
+says where to enable it rather than pretending it worked.
+
+Conversely, what `scope: 'regular'` buys on Chromium (InPrivate windows are
+proxied too, no leak) is the **default** on Firefox — this prior grant is the price.
+
+**3. Weaker runtime error signal.**
+
+Firefox's `proxy.onError` carries no `fatal` field, so unlike Chromium it cannot
+distinguish "the request was blocked, no leak" from "it went out direct, possible
+leak". The chosen stance is a self-healing alert that promises nothing either way —
+rather than always assuming the worst, which would train users to dismiss this class
+of alert and take the real leak warnings down with it.
+
+**4. Real-machine isolation testing is not done.**
+
+Two-browser egress ASN separation is verified on Chromium; the Firefox side has
+unit-test coverage only (including bundle-level assertions) and **has not been
+verified on a real machine** for egress isolation or fail-closed behaviour. A known
+open item, not a known guarantee. See `docs/test-plan.md` §6.5.
 
 ## Roadmap
 

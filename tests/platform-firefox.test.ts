@@ -26,18 +26,26 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   buildProxyConfig,
   firefox,
+  decideRoute,
   normalizeProxyError,
   PROXY_PASSTHROUGH,
   WEBRTC_LOCKED_POLICY,
 } from '../src/background/platform/firefox'
+import { shouldBypassProxy } from '../src/background/pac'
 import { DEFAULT_SETTINGS } from '../src/shared/constants'
 import type { Settings } from '../src/shared/types'
 import {
+  askFirefoxRouter,
+  ffOnRequestPresent,
+  ffRawRouterAnswer,
   emitFirefoxProxyError,
   ffErrorListenerCount,
   ffIncognito,
   ffOnErrorPresent,
+  ffPermissions,
   ffProxySetting,
+  ffRequestFilter,
+  ffRequestListenerCount,
   ffWebRtcSetting,
   installFirefoxMock,
   removeIncognitoApi,
@@ -204,7 +212,7 @@ describe('🔴 supports · 规则分流不被支持（能力）', () => {
     directRules: rules,
   })
 
-  it('🔴 refuses smart routing with usable rules', () => {
+  it('🔴 refuses smart routing until the permission is granted', async () => {
     /*
      * 这是本文件第二重要的一条。
      *
@@ -215,18 +223,27 @@ describe('🔴 supports · 规则分流不被支持（能力）', () => {
      * 这不是"没保护"，是"保护成了另一种样子"，且用户看不出来 ——
      * 正是本项目所有失败模式里最坏的那一类。
      */
-    expect(firefox.supports(smart(['*.edu.cn']))).toBe('ruleBasedRoutingUnsupported')
+    ffPermissions.granted = false
+
+    expect(await firefox.supports(smart(['*.edu.cn']))).toBe('routingPermissionRequired')
   })
 
-  it('allows global mode', () => {
-    expect(firefox.supports({ ...settings, routingMode: 'global' })).toBeNull()
+  it('allows smart routing once the permission is granted', async () => {
+    // 权限到手之后分流就是普通可用功能，与 Chromium 行为对齐。
+    ffPermissions.granted = true
+
+    expect(await firefox.supports(smart(['*.edu.cn']))).toBeNull()
   })
 
-  it('allows direct mode', () => {
-    expect(firefox.supports({ ...settings, routingMode: 'direct' })).toBeNull()
+  it('allows global mode', async () => {
+    expect(await firefox.supports({ ...settings, routingMode: 'global' })).toBeNull()
   })
 
-  it('allows smart mode when there are no usable rules', () => {
+  it('allows direct mode', async () => {
+    expect(await firefox.supports({ ...settings, routingMode: 'direct' })).toBeNull()
+  })
+
+  it('allows smart mode when there are no usable rules', async () => {
     /*
      * 与 Chromium 的 buildProxyConfig 保持同一个判据（needsRuleBasedRouting）：
      * 空清单或全是非法规则时，行为等价于全局，此时没有任何东西会被丢掉，
@@ -236,25 +253,44 @@ describe('🔴 supports · 规则分流不被支持（能力）', () => {
      *   改写成 `routingMode === 'smart'` 就拦，Firefox 用户开着一个
      *   空规则清单就再也开不了代理了 —— 而 Chromium 用户完全正常。
      */
-    expect(firefox.supports(smart([]))).toBeNull()
-    expect(firefox.supports(smart(["bad'", 'also:bad']))).toBeNull()
+    expect(await firefox.supports(smart([]))).toBeNull()
+    expect(await firefox.supports(smart(["bad'", 'also:bad']))).toBeNull()
   })
 
-  it('🔴 is synchronous and does not touch the incognito API', () => {
+  it('🔴 does not touch the incognito API', async () => {
     /*
-     * 能力判断是纯函数，不该有 IO。做成 async 会诱使将来有人在这里
-     * 发请求，而「保存设置」这条路径上多一次网络等待是没道理的。
+     * `supports` 与 `preflight` 拆开的意义就在这里：能力判断不牵连授权判断。
      *
-     * 顺带断言它**没有**去查授权：两者拆开的意义就在这里。
+     * 混在一起的后果此方踩过：一个没授予隐私窗口权限的 Firefox 用户
+     * 会**连端口都改不了** —— 因为保存设置那条路会去查一个
+     * 跟改端口毫无关系的权限。
+     *
+     * 注意 `supports` **确实**会查一个权限（可选主机权限），
+     * 但那是"这个功能本身需要的"，与"能不能写设置"是两件事。
      */
+    ffPermissions.granted = false
     ffIncognito.calls = 0
 
-    const result = firefox.supports(smart(['*.edu.cn']))
+    expect(await firefox.supports(smart(['*.edu.cn']))).toBe('routingPermissionRequired')
 
-    expect(result).toBe('ruleBasedRoutingUnsupported')
-    // 同步返回，不是 Promise。
-    expect(result).not.toBeInstanceOf(Promise)
     expect(ffIncognito.calls).toBe(0)
+  })
+
+  it('🔴 does not make network requests', async () => {
+    /*
+     * `supports` 在保存设置那条路径上被调用，而那里等一次网络是没道理的。
+     * `permissions.contains` 是本地查询，不算。
+     *
+     * 把 fetch 从全局删掉 —— 若哪天有人在这里加了个探活就会炸在这条上。
+     */
+    const originalFetch = globalThis.fetch
+    Reflect.deleteProperty(globalThis, 'fetch')
+
+    try {
+      await firefox.supports(smart(['*.edu.cn']))
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })
 
@@ -564,46 +600,412 @@ describe('🔴 supports 必须能在「保存设置」路径上单独使用', ()
    * 一个**能存下去、却让功能失效**的设置是最糟的交互形态：
    * 用户看不出自己做错了什么，只知道开关坏了。
    *
-   * 修法是让「保存设置」在**落盘之前**也查一次能力。
-   * 而那要求 `supports` 满足两个条件，下面各锁一条：
-   *
-   *   1. 不需要 await（保存路径上不该多一次网络等待）
-   *   2. 不牵连授权（改端口跟隐私窗口权限毫无关系）
-   *
-   * orchestrator.test.ts 里有对应的行为测试；这里锁的是平台契约本身
-   * 具备被那样使用的形状。
+   * 修法是让「保存设置」在**落盘之前**也查一次能力，
+   * 而这里锁的是平台契约具备被那样使用的形状。
    */
 
-  it('🔴 判据与 applyProxy 用的是同一个，不会各说各话', () => {
+  it('🔴 判据与 applyProxy 用的是同一个，不会各说各话', async () => {
     /*
-     * 若 supports 说"不支持"而 applyProxy 照样能写，或者反过来，
-     * 就会出现「存不进去但其实能用」或「存进去了但写不了」。
+     * 若 supports 说"不行"而 applyProxy 照样挂分流，或者反过来，
+     * 就会出现「存不进去但其实能用」或「存进去了但没生效」。
      * 两者都必须由同一个 needsRuleBasedRouting 决定 ——
      * platform-boundary.test.ts 从源码层面锁了这一点，
      * 这里从行为层面再验一次。
      */
+    ffPermissions.granted = false
+
     const smart: Settings = { ...settings, routingMode: 'smart', directRules: ['*.edu.cn'] }
     const empty: Settings = { ...settings, routingMode: 'smart', directRules: [] }
 
-    // 有规则 → 不支持
-    expect(firefox.supports(smart)).toBe('ruleBasedRoutingUnsupported')
-    // 无规则 → 支持，且此时 buildProxyConfig 产出的就是普通全局配置
-    expect(firefox.supports(empty)).toBeNull()
+    // 有规则且没授权 → 要权限
+    expect(await firefox.supports(smart)).toBe('routingPermissionRequired')
+    // 无规则 → 压根不需要分流，也就不需要权限
+    expect(await firefox.supports(empty)).toBeNull()
     expect(buildProxyConfig(empty).proxyType).toBe('manual')
   })
 
-  it('🔴 不支持的配置下 supports 先拦，用不着碰浏览器', () => {
+  it('🔴 没授权时不该动浏览器设置', async () => {
     /*
      * 保存设置被 supports 拦住时，**一次浏览器写入都不该发生** ——
      * 否则就是「报了错但还是写了」，比不报错更糟。
      */
+    ffPermissions.granted = false
     ffProxySetting.setCalls = []
 
-    expect(firefox.supports({ ...settings, routingMode: 'smart', directRules: ['*.edu.cn'] })).toBe(
-      'ruleBasedRoutingUnsupported',
-    )
+    expect(
+      await firefox.supports({ ...settings, routingMode: 'smart', directRules: ['*.edu.cn'] }),
+    ).toBe('routingPermissionRequired')
 
     expect(ffProxySetting.setCalls).toHaveLength(0)
+  })
+
+  it('🔴 supports 不该顺手弹权限窗', async () => {
+    /*
+     * 查询与索取必须分开（见 types.ts 里 requestPermissions 的注释）。
+     *
+     * `supports` 会在保存设置、开启代理、渲染状态等多处被调用，
+     * 其中大部分**不是**用户手势 —— 而 Firefox 的 permissions.request()
+     * 在无手势时直接拒绝。一个会弹窗的查询函数放在那些地方是灾难：
+     * 要么弹不出来白白失败，要么在用户没预期的时候弹。
+     */
+    ffPermissions.granted = false
+    ffPermissions.requestCalls = 0
+
+    await firefox.supports({ ...settings, routingMode: 'smart', directRules: ['*.edu.cn'] })
+
+    expect(ffPermissions.requestCalls).toBe(0)
+  })
+
+  it('🔴 权限查询失败时报「要权限」，不放行', async () => {
+    /*
+     * 与 preflight 那边「探测失败不阻断」的取向**相反**，因为代价方向不同：
+     *   - preflight 放行的代价：可能白白试一次写入，然后报个错
+     *   - 这里放行的代价：挂上一个没有权限的监听。Firefox 会拒绝它，
+     *     而请求会**按无分流处理** —— 用户的直连清单被静默忽略
+     *
+     * 后者是静默的、且正好发生在用户以为分流已生效的时候。宁可多问一次权限。
+     */
+    ffPermissions.failNextContains = new Error('permissions API exploded')
+
+    expect(
+      await firefox.supports({ ...settings, routingMode: 'smart', directRules: ['*.edu.cn'] }),
+    ).toBe('routingPermissionRequired')
+  })
+})
+
+describe('requestPermissions', () => {
+  const smart: Settings = { ...settings, routingMode: 'smart', directRules: ['*.edu.cn'] }
+
+  it('asks for the permission and reports the grant', async () => {
+    ffPermissions.granted = false
+    ffPermissions.willGrant = true
+
+    expect(await firefox.requestPermissions(smart)).toBe(true)
+    expect(ffPermissions.requestCalls).toBe(1)
+    // 同意之后 supports 应当放行 —— 这是最常见的真实流程。
+    expect(await firefox.supports(smart)).toBeNull()
+  })
+
+  it('reports refusal without throwing', async () => {
+    ffPermissions.granted = false
+    ffPermissions.willGrant = false
+
+    expect(await firefox.requestPermissions(smart)).toBe(false)
+    expect(await firefox.supports(smart)).toBe('routingPermissionRequired')
+  })
+
+  it('🔴 does not prompt when the config does not need routing', async () => {
+    /*
+     * 不该为了一个用不到的功能弹窗。用户在全局模式下点开关，
+     * 突然被要求"访问所有网站"会显得这个扩展在乱要权限 ——
+     * 而信任一旦丢了就不容易挽回，尤其对一个代理工具。
+     */
+    ffPermissions.granted = false
+    ffPermissions.requestCalls = 0
+
+    expect(await firefox.requestPermissions({ ...settings, routingMode: 'global' })).toBe(true)
+    expect(ffPermissions.requestCalls).toBe(0)
+  })
+
+  it('treats a throw as refusal', async () => {
+    // 无用户手势时 Firefox 会抛。当成"没拿到"，而不是让异常冒到 UI。
+    ffPermissions.granted = false
+    ffPermissions.failNextRequest = new Error('no user gesture')
+
+    expect(await firefox.requestPermissions(smart)).toBe(false)
+  })
+})
+
+// ===========================================================================
+// 🔴🔴 智能分流：proxy.onRequest
+// ===========================================================================
+
+describe('🔴🔴 decideRoute · fail-closed 靠末尾那个 null', () => {
+  const rules = ['*.edu.cn', 'lib.example.org']
+  const route = (url: string) => decideRoute(settings, rules, url)
+
+  it('🔴🔴 proxied answers end with null', () => {
+    /*
+     * **这是整个 Firefox 分流实现里最不能错的一格。**
+     *
+     * MDN proxy.onRequest 原话：
+     *   > By default, the request **fails over to any browser-defined proxy**
+     *   > unless a null object or an array ending in a null object is returned.
+     *
+     * 也就是说只返回 `{type:'http',...}` 是 **fail-open** ——
+     * 我们的代理连不上时，浏览器会自己找别的出路（包括直连），
+     * 而那正是本项目最不能发生的事：用户以为在走代理，实际直连。
+     *
+     * 与 PAC 那边是**镜像**关系，值得一起记住：
+     *   - PAC：不写 `; DIRECT` 才安全（写了才 fail-open）
+     *   - onRequest：**必须**写 null 才安全（不写就 fail-open）
+     * 两个 API 的默认方向相反，照着一边的直觉写另一边一定会错。
+     */
+    const answer = route('https://www.google.com/')
+
+    expect(Array.isArray(answer)).toBe(true)
+    const list = answer as unknown[]
+    expect(list).toHaveLength(2)
+    expect(list[0]).toEqual({ type: 'http', host: '127.0.0.1', port: 7890 })
+    // 🔴 末尾必须是 null —— 「用这个代理，没有下一个」。
+    expect(list[1]).toBeNull()
+  })
+
+  it('routes a matching suffix rule direct', () => {
+    expect(route('https://lib.swpu.edu.cn/paper')).toEqual({ type: 'direct' })
+  })
+
+  it('routes the bare domain of a suffix rule direct', () => {
+    // `*.edu.cn` 同时命中裸域 `edu.cn` —— 与 PAC 那边语义一致。
+    expect(route('https://edu.cn/')).toEqual({ type: 'direct' })
+  })
+
+  it('routes an exact rule direct', () => {
+    expect(route('https://lib.example.org/x')).toEqual({ type: 'direct' })
+  })
+
+  it('does not let an exact rule match a subdomain', () => {
+    // 精确匹配就是精确 —— `lib.example.org` 不该命中 `a.lib.example.org`。
+    expect(Array.isArray(route('https://a.lib.example.org/'))).toBe(true)
+  })
+
+  it('routes loopback direct so the controller probe cannot self-loop', () => {
+    /*
+     * ADR-02 的 onRequest 版：扩展访问 Controller 的请求若被送进代理，
+     * 会形成自环 —— 不报错，只是诡异地卡住。
+     */
+    for (const url of ['http://127.0.0.1:9097/version', 'http://localhost:9097/', 'http://[::1]/']) {
+      expect(route(url), url).toEqual({ type: 'direct' })
+    }
+  })
+
+  it('routes dotless hosts direct', () => {
+    // 内网主机名（`router`、`nas`）—— 与 bypass 清单的 `<local>` 对应。
+    expect(route('http://nas/')).toEqual({ type: 'direct' })
+  })
+
+  it('🔴 proxies an unparseable URL instead of sending it direct', () => {
+    /*
+     * fail-closed 的同一条精神：拿不准时选更保守的那个。
+     * 一个我们看不懂的 URL 直连出去，可能正是那个会暴露真实 IP 的请求。
+     */
+    const answer = route('not a url at all')
+
+    expect(Array.isArray(answer)).toBe(true)
+    expect((answer as unknown[])[1]).toBeNull()
+  })
+
+  it('is case-insensitive on the host', () => {
+    expect(route('https://LIB.SWPU.EDU.CN/')).toEqual({ type: 'direct' })
+  })
+
+  it('honours a user-changed proxy port', () => {
+    const list = decideRoute(
+      { ...settings, proxyPort: 2080 },
+      rules,
+      'https://www.google.com/',
+    ) as unknown[]
+
+    expect(list[0]).toEqual({ type: 'http', host: '127.0.0.1', port: 2080 })
+  })
+
+  it('🔴 agrees with the PAC implementation on the same hosts', () => {
+    /*
+     * 🔴 这条守的是一个**复刻关系**。
+     *
+     * 分流判定有两份实现：`shouldBypassProxy`（本函数用的）与
+     * `buildPacScript` 生成的脚本（Chromium 用的）。后者必须复刻前者的逻辑，
+     * 因为 PAC 在浏览器的独立 JS 环境里跑，没法调我们的函数。
+     *
+     * 复刻会漂移，而漂移的后果是**同一条规则在两个浏览器上行为不同** ——
+     * 用户在 Edge 上配好的直连清单，换到 Firefox 上某几条突然不生效。
+     * 那种 bug 极难归因，因为两边的配置字面上完全一样。
+     */
+    const hosts = [
+      'lib.swpu.edu.cn',
+      'edu.cn',
+      'lib.example.org',
+      'a.lib.example.org',
+      'www.google.com',
+      '127.0.0.1',
+      'localhost',
+      'nas',
+      'notedu.cn',
+    ]
+
+    for (const host of hosts) {
+      const answer = route(`https://${host}/`)
+      const saysDirect = !Array.isArray(answer)
+
+      expect(saysDirect, host).toBe(shouldBypassProxy(host, rules))
+    }
+  })
+})
+
+describe('🔴 registerListeners · 顶层注册的分流监听', () => {
+  const smart: Settings = { ...settings, routingMode: 'smart', directRules: ['*.edu.cn'] }
+
+  /** 装一个"现读状态"的读取器，模拟 index.ts 注入的那个闭包。 */
+  function inject(state: { enabled: boolean; settings: Settings }) {
+    const box = { ...state }
+    firefox.registerListeners(async () => box)
+    return box
+  }
+
+  it('registers exactly one listener, on <all_urls>', () => {
+    inject({ enabled: true, settings: smart })
+
+    expect(ffRequestListenerCount()).toBe(1)
+    /*
+     * 刻意不按 requestType 过滤：任何请求都可能暴露 IP，
+     * 少拦一类就是留一个口子 —— 与 ADR-01 拒绝 `proxyForHttp` 同一个道理。
+     */
+    expect(ffRequestFilter()?.urls).toEqual(['<all_urls>'])
+  })
+
+  it('proxies a non-matching host', async () => {
+    inject({ enabled: true, settings: smart })
+
+    const list = (await askFirefoxRouter('https://www.google.com/')) as unknown[]
+
+    expect(list[0]).toEqual({ type: 'http', host: '127.0.0.1', port: 7890 })
+    expect(list[1]).toBeNull()
+  })
+
+  it('sends a matching host direct', async () => {
+    inject({ enabled: true, settings: smart })
+
+    expect(await askFirefoxRouter('https://lib.swpu.edu.cn/')).toEqual({ type: 'direct' })
+  })
+
+  it('🔴🔴 stays silent when the proxy is switched OFF', async () => {
+    /*
+     * 🔴 此方在写 releaseProxy 的注释时发现的漏洞。
+     *
+     * 监听是顶层注册的、永久存在，而它只看 routingMode 与规则清单 ——
+     * 那两样在用户**关掉代理之后并不会变**。所以关掉代理后它仍会返回
+     * "走 127.0.0.1:7890"，流量继续进代理。
+     *
+     * 那是**反方向的欺骗**：用户点了关闭、UI 显示已关闭，而浏览器还在走代理。
+     * 比"以为开了其实没开"更隐蔽，因为不会有任何症状 —— 网页照常打开，
+     * 只是出口还是节点 IP。一个想临时切回校园网查资料的人会完全被误导，
+     * 而且会得出"这插件的开关是假的"这个结论 —— 那比功能缺失严重得多。
+     */
+    inject({ enabled: false, settings: smart })
+
+    expect(await askFirefoxRouter('https://www.google.com/')).toBeNull()
+  })
+
+  it('🔴 does not force DIRECT when off, it abstains', async () => {
+    /*
+     * 关闭时返回 undefined（不表态）而不是 `{type:'direct'}`。
+     *
+     * 后者会**强制**直连，越权覆盖用户自己可能配的系统代理 ——
+     * 与 ADR-18 拒绝写 direct 是同一个道理：「关闭 LostProxy」的语义是
+     * 「LostProxy 不再干预」，不是「强制全世界直连」。
+     *
+     * askFirefoxRouter 把 undefined 与 null 都归成 null（照 Firefox 的
+     * "第一个返回非空的赢"语义），所以这里额外直接检查监听的原始返回。
+     */
+    inject({ enabled: false, settings: smart })
+
+    const raw = await ffRawRouterAnswer('https://www.google.com/')
+
+    expect(raw).toBeUndefined()
+  })
+
+  it('abstains in global mode so proxy.settings decides', async () => {
+    /*
+     * 全局模式下不表态 —— 让 `proxy.settings` 里那份全局代理生效。
+     *
+     * 刻意**不**返回 direct：那会把全局模式下的所有流量直连，
+     * 也就是把代理整个关掉，而用户以为它开着。
+     */
+    inject({ enabled: true, settings: { ...settings, routingMode: 'global' } })
+
+    expect(await ffRawRouterAnswer('https://www.google.com/')).toBeUndefined()
+  })
+
+  it('abstains when smart mode has no usable rules', async () => {
+    // 等价于全局，同上。
+    inject({ enabled: true, settings: { ...smart, directRules: [] } })
+
+    expect(await ffRawRouterAnswer('https://www.google.com/')).toBeUndefined()
+  })
+
+  it('🔴 re-reads state on every request instead of capturing it', async () => {
+    /*
+     * 监听必须**现读**状态，不能捏着注册时的那份快照。
+     *
+     * 事件页被卸载重建后，这个闭包会重新执行 —— 但在同一次存活期内，
+     * 用户完全可能改规则或关开关。捏快照的表现是"改了设置没反应"，
+     * 而更糟的是关掉开关之后流量还在走代理。
+     */
+    const box = inject({ enabled: true, settings: smart })
+
+    expect(Array.isArray(await askFirefoxRouter('https://www.google.com/'))).toBe(true)
+
+    // 用户关掉了开关。
+    box.enabled = false
+
+    expect(await askFirefoxRouter('https://www.google.com/')).toBeNull()
+  })
+
+  it('🔴 proxies when the state read throws', async () => {
+    /*
+     * fail-closed：读不到状态时走代理，而不是直连。
+     *
+     * 用默认端口做兜底是个**猜测**，而这里可以接受：这条路只在
+     * "读 storage 失败"时走到，那本身已经是异常。猜错的后果是请求失败
+     * （可见故障）；不猜（直连）的后果是真实 IP 泄漏。
+     */
+    firefox.registerListeners(async () => {
+      throw new Error('storage exploded')
+    })
+
+    const list = (await askFirefoxRouter('https://www.google.com/')) as unknown[]
+
+    expect(Array.isArray(list)).toBe(true)
+    expect(list[1]).toBeNull()
+  })
+
+  it('🔴 does not throw when proxy.onRequest is unavailable', () => {
+    /*
+     * `onRequest` 需要 `<all_urls>`，而它是**可选**权限 ——
+     * 用户没给时这个 API 可能不可用。
+     *
+     * 这段代码在事件页**顶层**执行，抛出去会让整个背景脚本挂掉 ——
+     * 连本来能正常工作的代理开关一起没了。一个可选功能不值得这个代价。
+     */
+    ffOnRequestPresent.value = false
+
+    expect(() => firefox.registerListeners(async () => ({ enabled: true, settings: smart }))).not.toThrow()
+  })
+
+  it('🔴 applyProxy does not attach its own listener', async () => {
+    /*
+     * 此方最初把监听挂在 applyProxy 里，那违反了 index.ts 自己写着的铁律
+     * （事件监听必须顶层同步注册）。Firefox 的事件页空闲约 30 秒就卸载，
+     * 从业务流程挂的监听随之消失且没人重挂 ——
+     * 用户的直连清单于是静默失效：校内站点开始走代理，页面还能开，
+     * 只是进不去校内资源。在他眼里就是"这功能坏了"。
+     *
+     * 这条断言锁住那个错误不再复现。
+     */
+    await firefox.applyProxy(smart)
+
+    expect(ffRequestListenerCount()).toBe(0)
+  })
+
+  it('releaseProxy does not need to detach anything', async () => {
+    // 监听现读状态，所以关闭代理时不需要摘它 —— 不存在
+    // "该摘的时候没摘"或"摘了又没重挂"这类状态。
+    inject({ enabled: true, settings: smart })
+
+    await firefox.releaseProxy()
+
+    expect(ffRequestListenerCount()).toBe(1)
+    expect(ffProxySetting.clearCalls).toHaveLength(1)
   })
 })
 
@@ -618,6 +1020,7 @@ describe('契约', () => {
 
   it.each([
     'supports',
+    'requestPermissions',
     'preflight',
     'readProxyState',
     'applyProxy',

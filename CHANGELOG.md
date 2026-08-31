@@ -23,7 +23,7 @@ Firefox support. All business logic and UI shared; browser differences confined 
   「装上了但代理压根没生效」而浏览器不报错。Release 页面按浏览器标注了下载。
   The two archives are **not interchangeable**; the wrong one silently proxies nothing.
 
-### Firefox 版与 Chromium 版的三处行为差异 / Three behavioural differences
+### Firefox 版与 Chromium 版的行为差异 / Behavioural differences
 
 - **必须授予「在隐私窗口中运行」。** Firefox 规定代理设置对隐私窗口与普通窗口同时生效，
   因此不给这个权限就完全不允许扩展改代理。没给时扩展会告诉你去哪儿开，
@@ -31,11 +31,21 @@ Firefox support. All business logic and UI shared; browser differences confined 
   「InPrivate 也走代理」在 Firefox 上是默认行为。
   **Private-window access is required** — Firefox refuses proxy changes without it. LostProxy says
   where to enable it instead of showing a false ON.
-- **不支持智能分流。** Firefox 的 `proxy.settings` 只支持 `autoConfigUrl`，没有内联 PAC。
-  用 URL 投递脚本会重新引入「取不到脚本就静默直连」，与本项目的 fail-closed 取向相反。
-  所以开着分流模式时**拒绝开启并说明**，而不是悄悄按全局代理处理 ——
-  后者会让你配的直连清单被无声忽略。把这些规则写进 Mihomo 配置反而更好。
-  **No rule-based routing**: refused with an explanation rather than silently downgraded to global.
+- **智能分流需要一次额外授权，且只在你要用时才问。** Firefox 的 `proxy.settings`
+  只支持 `autoConfigUrl`、没有内联 PAC，所以分流走 `proxy.onRequest` ——
+  浏览器对**每个请求**问扩展一次「走代理还是直连」。这意味着扩展能看到你访问的
+  每一个网址，所以 Firefox 必须先征得同意。第一次把模式切成「智能」时弹一次，
+  不给就继续用全局代理，给了之后随时能在 `about:addons` 里收回。
+
+  刻意**不**在安装时一次要掉：默认只要 `http://127.0.0.1/*` 本身是这个项目的
+  一项卖点 —— 权限面小意味着即便扩展被攻破，能拿到的东西也有限。
+  让只用全局代理的人替一个可选功能付这个代价是亏的。
+
+  顺带一提，这条路**比 PAC 更干净**：规则从来不变成代码，所以 Chromium 版里
+  那整套 PAC 注入防御（字符白名单、`JSON.stringify` 序列化、纯 ASCII 校验）
+  在 Firefox 上根本不需要。
+  Smart routing asks for one permission the first time you enable it, because
+  Firefox has no inline PAC and must consult the extension per request.
 - **运行时错误信号更弱。** Firefox 的 `proxy.onError` 不带 `fatal` 字段，
   无法区分「请求被拦住了（没泄漏）」与「已经直连出去了（可能泄漏）」。
   此时报一条可自愈的告警、不对是否泄漏做任何承诺 —— 而不是一律按最坏情况报警，

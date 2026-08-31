@@ -30,10 +30,10 @@
  * 不引 `@types/firefox-webext-browser` 再多一个依赖。
  */
 
-import { LOOPBACK_HOSTS } from '../../shared/constants'
+import { DEFAULT_SETTINGS, LOOPBACK_HOSTS } from '../../shared/constants'
 import { errors } from '../../shared/errors'
 import type { NormalizedError, Settings } from '../../shared/types'
-import { needsRuleBasedRouting } from '../pac'
+import { needsRuleBasedRouting, sanitizeRules, shouldBypassProxy } from '../pac'
 import type { BrowserPlatform, PlatformBlocker, ProxyInspection, WebRtcInspection } from './types'
 
 // ---------------------------------------------------------------------------
@@ -88,6 +88,28 @@ interface FirefoxExtensionApi {
   isAllowedIncognitoAccess(): Promise<boolean>
 }
 
+/** `proxy.onRequest` 监听收到的请求详情（只列本项目用得到的字段）。 */
+interface FirefoxRequestDetails {
+  url: string
+}
+
+/**
+ * `proxy.ProxyInfo` —— 监听的返回值。
+ *
+ * `type: 'direct'` 时其余字段被忽略。
+ */
+interface FirefoxProxyInfo {
+  type: 'direct' | 'http' | 'https' | 'socks' | 'socks4'
+  host?: string
+  port?: number
+}
+
+/** `browser.permissions` 的窄声明。 */
+interface FirefoxPermissionsApi {
+  contains(perms: { origins?: string[]; permissions?: string[] }): Promise<boolean>
+  request(perms: { origins?: string[]; permissions?: string[] }): Promise<boolean>
+}
+
 interface FirefoxProxySettingsValue {
   proxyType?: string
   http?: string
@@ -110,6 +132,44 @@ interface FirefoxProxySettingsValue {
  */
 function extensionApi(): FirefoxExtensionApi {
   return (chrome as unknown as { extension: FirefoxExtensionApi }).extension
+}
+
+/**
+ * 智能分流需要的可选主机权限。
+ *
+ * 🔴 **为什么是可选的，而不是写进 `host_permissions`。**
+ *
+ * `proxy.onRequest` 要求过滤器的匹配模式是扩展主机权限的**子集**，
+ * 所以要拦截全部请求就得有 `<all_urls>`。若把它写成必需权限，
+ * 每个装 Firefox 版的人在安装时都会看到「访问您在所有网站上的数据」——
+ * 包括那些只想用全局代理、压根不碰分流的人。
+ *
+ * 对一个代理工具来说，「默认只要 `http://127.0.0.1/*`」本身是一项卖点：
+ * 权限面小意味着即便扩展被攻破，能拿到的东西也有限。
+ * 拿它去换一个可选功能是亏的。
+ *
+ * 用 `optional_host_permissions`（Firefox 128+，正好是我们的最低版本）
+ * 之后，这个取舍变成**用户自己的、可撤销的决定**：
+ * 他第一次开智能分流时才弹权限请求，不想给就继续用全局，
+ * 给了之后随时能在 about:addons 里收回。
+ */
+const ALL_URLS = '<all_urls>'
+
+function permissionsApi(): FirefoxPermissionsApi {
+  return (chrome as unknown as { permissions: FirefoxPermissionsApi }).permissions
+}
+
+function proxyApi(): {
+  onRequest?: {
+    addListener(
+      listener: (details: FirefoxRequestDetails) => unknown,
+      filter: { urls: string[] },
+    ): void
+    removeListener(listener: (details: FirefoxRequestDetails) => unknown): void
+  }
+  onError?: { addListener(listener: (error: unknown) => void): void }
+} {
+  return chrome.proxy as never
 }
 
 /** Firefox 的 proxy.settings，形状与 Chromium 的同名对象不同。 */
@@ -153,6 +213,201 @@ export function buildProxyConfig(settings: Settings): FirefoxProxySettingsValue 
     // 🔴 不可省。见上方注释 —— 省了会让 HTTPS 直连。
     httpProxyAll: true,
     passthrough: PROXY_PASSTHROUGH,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 智能分流：proxy.onRequest
+// ---------------------------------------------------------------------------
+
+/**
+ * 分流监听的运行时依赖 —— 由 `background/index.ts` 在**顶层**注入。
+ *
+ * ## 为什么必须顶层注册
+ *
+ * 此方最初把 `addListener` 放在 `applyProxy` 里，那违反了 `index.ts`
+ * 自己写着的那条铁律：「事件监听器必须在顶层同步注册，
+ * 若放进某个 async 流程里延迟注册，被唤醒后事件会在监听器挂上之前丢失」。
+ *
+ * Firefox 的 MV3 背景是**事件页**，空闲约 30 秒就被卸载。卸载时
+ * 从 `applyProxy` 挂上的监听一起消失，而重建时没人重挂它 ——
+ * 因为重挂只发生在"用户开代理/改设置"的时候。
+ *
+ * 后果不是泄漏（`proxy.settings` 里的全局代理还在，所以流量仍走代理），
+ * 而是**用户的直连清单静默失效**：他配的校内站点开始走代理，
+ * 页面还能开，只是慢或者进不去校内资源 —— 而这在他眼里就是"这功能坏了"，
+ * 且看不出与"刚才闲置了半分钟"有任何关系。
+ *
+ * 现在改成：`index.ts` 顶层注册一个**永久**监听，它每次被问到时
+ * 现读设置。`proxy.onRequest` 允许监听返回 Promise（MDN 明确列出
+ * 「a Promise that resolves to a ProxyInfo object」），所以"现读"是可行的。
+ *
+ * ## 为什么这样反而更简单
+ *
+ * 没有生命周期要管了：不用摘、不用挂、不用判断配置变没变，
+ * 也不存在"模块缓存与浏览器真实监听列表不一致"这种状态。
+ * 唯一的模块级变量是下面这个 settings 读取器，而它在顶层注入一次后不再变 ——
+ * 不是可变状态，是依赖注入。
+ */
+let readState: (() => Promise<{ enabled: boolean; settings: Settings }>) | null = null
+
+/**
+ * 造一个分流决策函数。
+ *
+ * 🔴🔴 **返回值末尾那个 `null` 是整段代码的全部安全性所在。**
+ *
+ * MDN `proxy.onRequest` 原话：
+ *   > By default, the request **fails over to any browser-defined proxy**
+ *   > unless a null object or an array ending in a null object is returned.
+ *
+ * 也就是说只返回 `{type:'http', host, port}` 是 **fail-open** ——
+ * 我们的代理连不上时，浏览器会自己找一个别的出路（包括直连），
+ * 而那正是本项目最不能发生的事。
+ *
+ * 加上 `null` 结尾之后语义变成「用这个代理，**没有下一个**」，
+ * 代理不可达时请求直接失败 —— 一个可见故障。
+ *
+ * 这与 PAC 那边的坑是**镜像**关系，值得一起记住：
+ *   - PAC：不写 `; DIRECT` 才安全（写了才 fail-open）
+ *   - onRequest：**必须**写 `null` 才安全（不写就 fail-open）
+ * 两个 API 的默认方向相反，照着一边的直觉写另一边一定会错。
+ *
+ * ⚠️ `type: 'direct'` 那条分支**不加** null 结尾 —— 它本身就是终态，
+ *    没有"回落"的概念。而且 MDN 明确说了 direct「doesn't override any
+ *    proxy set by the user」，也就是用户自己配的系统代理仍然生效 ——
+ *    这正是我们想要的：直连清单的语义是「不经过我们的代理」，
+ *    而不是「强制裸奔」。
+ */
+export function decideRoute(
+  settings: Settings,
+  rules: readonly string[],
+  url: string,
+): FirefoxProxyInfo[] | FirefoxProxyInfo {
+  const proxied: FirefoxProxyInfo[] = [
+    { type: 'http', host: settings.proxyHost, port: settings.proxyPort },
+    // 🔴 不可省。见上方注释 —— 省了就是 fail-open。
+    null as unknown as FirefoxProxyInfo,
+  ]
+
+  /*
+   * 从 URL 取主机名。
+   *
+   * 解析失败时**走代理**而不是直连 —— fail-closed 的同一条精神：
+   * 拿不准的时候选更保守的那个。一个我们看不懂的 URL 直连出去，
+   * 可能正是那个会暴露真实 IP 的请求。
+   */
+  let host: string
+  try {
+    host = new URL(url).hostname
+  } catch {
+    return proxied
+  }
+
+  return shouldBypassProxy(host, rules) ? { type: 'direct' } : proxied
+}
+
+/**
+ * 分流监听本体 —— 每个请求被调用一次。
+ *
+ * 🔴 **三条 fail-closed 分支，方向都是"拿不准就走代理"：**
+ *
+ *   1. 还没注入设置读取器（理论上不该发生）→ 走代理
+ *   2. 读设置失败 → 走代理
+ *   3. 当前配置不需要分流 → 返回 undefined，交给 `proxy.settings` 的全局代理
+ *
+ * 第 3 条值得说明：返回 `undefined` 意味着"这个监听不表态"，
+ * 于是浏览器按 `proxy.settings` 处理 —— 而那里写的是我们的全局代理。
+ * 刻意**不**返回 `{type:'direct'}`：那会让全局模式下的所有流量直连，
+ * 也就是把代理整个关掉，而用户以为它开着。
+ *
+ * 前两条返回代理而不是"不表态"，因为"不表态"依赖
+ * `proxy.settings` 已经写好 —— 在开关刚被点开、settings 还没落地的
+ * 那个瞬间它可能还没写。走代理是无条件安全的那一边。
+ */
+async function routeListener(
+  details: FirefoxRequestDetails,
+): Promise<FirefoxProxyInfo[] | FirefoxProxyInfo | undefined> {
+  if (readState === null) return FALLBACK_PROXIED
+
+  let state: { enabled: boolean; settings: Settings }
+  try {
+    state = await readState()
+  } catch {
+    return FALLBACK_PROXIED
+  }
+
+  /*
+   * 🔴 **开关是关的就完全不表态。**
+   *
+   * 这一条是此方在写 `releaseProxy` 的注释时发现的漏洞：监听是顶层注册的、
+   * 永久存在，它只看 `routingMode` 与规则清单 —— 而那两样在用户
+   * **关掉代理之后并不会变**。所以关掉代理后它仍会返回"走 127.0.0.1:7890"，
+   * 流量继续进代理。
+   *
+   * 那是**反方向的欺骗**：用户点了关闭、UI 显示已关闭，而浏览器还在走代理。
+   * 比"以为开了其实没开"更隐蔽，因为不会有任何症状 —— 网页照常打开，
+   * 只是出口还是节点 IP。一个想临时切回校园网查资料的人会完全被误导。
+   *
+   * 返回 `undefined`（不表态）而不是 `{type:'direct'}`：后者会**强制**直连，
+   * 越权覆盖用户自己可能配的系统代理 —— 与 ADR-18 拒绝写 `direct` 同一个道理。
+   * 不表态则让浏览器按自己的设置办，而 `releaseProxy` 已经把我们的清掉了。
+   */
+  if (!state.enabled) return undefined
+
+  // 不需要分流 → 同样不表态，让 `proxy.settings` 里的全局代理生效。
+  if (!needsRuleBasedRouting(state.settings)) return undefined
+
+  return decideRoute(state.settings, sanitizeRules(state.settings.directRules), details.url)
+}
+
+/**
+ * 读不到设置时的兜底答案。
+ *
+ * 用 `127.0.0.1` 与本项目的默认端口 —— 这是一个**猜测**，而猜测在这里
+ * 是可接受的：这条路径只在"设置读取失败"时走到，而那本身已经是异常。
+ * 猜错的后果是请求失败（可见故障）；不猜（返回 direct）的后果是
+ * 真实 IP 泄漏。前者远优于后者。
+ */
+const FALLBACK_PROXIED: FirefoxProxyInfo[] = [
+  { type: 'http', host: DEFAULT_SETTINGS.proxyHost, port: DEFAULT_SETTINGS.proxyPort },
+  null as unknown as FirefoxProxyInfo,
+]
+
+/**
+ * 在顶层注册分流监听。**必须由 `background/index.ts` 同步调用一次。**
+ *
+ * @param stateReader 现读「开关状态 + 当前设置」。由调用方注入而不是本文件
+ *   直接 import storage —— 平台层不该依赖 storage（模块边界，与 proxy.ts 同理）。
+ *
+ *   🔴 **必须同时给开关状态。** 只给 settings 会漏掉一个反方向的欺骗：
+ *   代理关掉之后 routingMode 与规则清单并不会变，监听于是继续把流量
+ *   送进代理 —— 用户以为关了，实际还在走。见 `routeListener` 的注释。
+ */
+export function registerRouter(
+  stateReader: () => Promise<{ enabled: boolean; settings: Settings }>,
+): void {
+  readState = stateReader
+
+  /*
+   * 过滤器必须是主机权限的子集（MDN）。这里用 `<all_urls>`，而它是
+   * **可选**权限 —— 用户没授予时 Firefox 会拒绝这次注册（或让监听收不到
+   * 任何请求）。那是可接受的：没授权时 `supports` 会拦住分流模式，
+   * 所以监听本来也无事可做，全局代理照常工作。
+   *
+   * 刻意**不**按 requestType 过滤：任何请求都可能暴露 IP，
+   * 少拦一类就是留一个口子 —— 与 ADR-01 拒绝 `proxyForHttp` 同一个道理。
+   */
+  try {
+    proxyApi().onRequest?.addListener(routeListener, { urls: [ALL_URLS] })
+  } catch {
+    /*
+     * 注册失败（通常是还没拿到 `<all_urls>`）**不能让扩展起不来**。
+     * 这是在事件页顶层执行的代码，抛出去会让整个背景脚本挂掉 ——
+     * 连本来能正常工作的代理开关一起没了。
+     *
+     * 失败的代价只是分流不生效，而那条路上 `supports` 会拦住用户
+     * 并说明要给权限。用户授权之后 Firefox 会重启扩展，届时重新注册。
+     */
   }
 }
 
@@ -220,25 +475,61 @@ export const firefox: BrowserPlatform = {
   id: 'firefox',
 
   /**
-   * 🔴 Firefox 只支持 `autoConfigUrl`，**没有内联 PAC**，所以做不到规则分流。
+   * 规则分流可用，但需要一个可选权限。
    *
-   * 为什么不用 autoConfigUrl 绕过去：那需要把脚本放到一个 URL 上。
-   * 用 `data:` / `moz-extension:` URL 都要引入新的失败模式
-   * （取不到脚本 → PAC 默认 fail-open → **静默直连**），
-   * 而消除这个失败模式正是 ADR-33 当初选择内联 data 的理由。
-   * 在一个以"不静默泄漏"为卖点的工具里，把刚堵上的洞重新挖开
-   * 换一个功能，方向是反的。
+   * Firefox 的 `proxy.settings` 只支持 `autoConfigUrl`、**没有内联 PAC**，
+   * 所以分流走的是另一条路：`proxy.onRequest` —— 浏览器对每个请求
+   * 问扩展一次「走代理还是直连」。
    *
-   * 正确的做法是 `proxy.onRequest`（每个请求跑一次我们的 JS，
-   * 顺带把 PAC 的字符串注入面整个消掉）。它需要 `<all_urls>` 主机权限，
-   * 也就是安装时会多一句「访问您在所有网站上的数据」——
-   * 那是个值得单独跟用户讲清楚的取舍，所以留给后续版本。
+   * 那条路**比 PAC 更好**：没有字符串拼接，`pac.ts` 里那整套注入防御
+   * （白名单、`JSON.stringify`、`assertAscii`）在这里都不需要，
+   * 因为规则从来不变成代码。fail-closed 也由返回值直接表达。
    *
-   * 在它落地之前，**拒绝**比静默降级正确。而且这个拒绝现在发生在
-   * **保存设置**那一刻，用户不会存下一份让开关点不动的配置。
+   * 刻意**不**用 `autoConfigUrl` 绕：那需要把脚本放到一个 URL 上
+   * （`data:` / `moz-extension:`），从而引入「取不到脚本 → PAC 默认
+   * fail-open → **静默直连**」这个失败模式 —— 而消除它正是 ADR-33
+   * 选择内联 data 的理由。在一个以"不静默泄漏"为卖点的工具里，
+   * 把刚堵上的洞重新挖开换一个功能，方向是反的。
+   *
+   * 代价是权限：`onRequest` 的过滤器必须是主机权限的子集，
+   * 要拦全部请求就得有 `<all_urls>`。它是**可选**权限，
+   * 只在用户真的要用分流时才索取（见 `ALL_URLS` 的注释）。
+   *
+   * 查询失败时**报需要权限**而不是放行 —— 与 `preflight` 那边
+   * 「探测失败不阻断」的取向相反，因为两者的代价方向不同：
+   * 那边放行的代价只是可能报个错，这边放行的代价是挂上一个
+   * 没有权限的监听 —— Firefox 会拒绝它，而请求会**按无分流处理**，
+   * 也就是用户的直连清单被静默忽略。宁可多问一次权限。
    */
-  supports(settings: Settings): PlatformBlocker | null {
-    return needsRuleBasedRouting(settings) ? 'ruleBasedRoutingUnsupported' : null
+  async supports(settings: Settings): Promise<PlatformBlocker | null> {
+    if (!needsRuleBasedRouting(settings)) return null
+
+    try {
+      const granted = await permissionsApi().contains({ origins: [ALL_URLS] })
+      return granted ? null : 'routingPermissionRequired'
+    } catch {
+      return 'routingPermissionRequired'
+    }
+  },
+
+  /**
+   * 索取分流所需的可选权限。
+   *
+   * ⚠️ 必须在用户手势的调用栈里 —— Firefox 无手势时直接拒绝。
+   *    调用点在 `orchestrator` 处理 SAVE_SETTINGS / ENABLE 消息时，
+   *    而那两条消息都由用户点击发出，所以手势成立。
+   *
+   * 不需要分流的配置直接返回 true：不该为了一个用不到的功能弹窗。
+   */
+  async requestPermissions(settings: Settings): Promise<boolean> {
+    if (!needsRuleBasedRouting(settings)) return true
+
+    try {
+      return await permissionsApi().request({ origins: [ALL_URLS] })
+    } catch {
+      // 弹窗被拒、或 API 不存在 —— 两种都当作"没拿到"。
+      return false
+    }
   },
 
   /**
@@ -282,6 +573,17 @@ export const firefox: BrowserPlatform = {
    * 与 Chromium 实现一样：**不检查内核是否在运行**（ADR-03 fail-closed）。
    */
   async applyProxy(settings: Settings): Promise<void> {
+    /*
+     * 只写 settings。分流监听由 `registerRouter` 在**顶层**注册一次，
+     * 它每次被问到时现读设置，所以这里**不需要**做任何"重挂监听"的事。
+     *
+     * 那是刻意的：从这里挂监听会在事件页被卸载后失效（Firefox 的 MV3
+     * 背景是事件页，空闲约 30 秒就卸载），而重挂只发生在
+     * "用户开代理 / 改设置"的时候 —— 中间那段时间用户的直连清单
+     * **静默失效**：他配的校内站点开始走代理，页面还能开，只是进不去
+     * 校内资源。在他眼里就是"这功能坏了"，且看不出与刚才闲置半分钟
+     * 有任何关系。见 `readSettings` 的注释。
+     */
     await proxySettings().set({ value: buildProxyConfig(settings) })
   },
 
@@ -293,6 +595,25 @@ export const firefox: BrowserPlatform = {
    * `clear()` 让设置回落到 Firefox 自己的 `proxyType: 'system'` 默认值。
    */
   async releaseProxy(): Promise<void> {
+    /*
+     * 只清 settings，监听留着不摘。
+     *
+     * 它每次被问到时现读设置，而代理关掉之后 `needsRuleBasedRouting`
+     * 仍可能为真（用户的模式设置没变），此时它会返回一份指向我们代理的
+     * 答案 —— 但那不构成问题：`proxy.settings` 已经 clear 了，
+     * 而 onRequest 的答案只对**它自己表态的那些请求**生效，
+     * 而它表态的正是"该走代理"的那些。
+     *
+     * 🔴 此方核对过这一点：代理关闭后若监听仍把流量送进
+     *    127.0.0.1:7890，用户会以为关掉了代理而实际还在走 ——
+     *    那是反方向的欺骗。所以 `handleDisable` 之后 orchestrator 会
+     *    重新采集状态，而 `enabled` 为 false 时 UI 显示关闭。
+     *    真正兜住这件事的是下面这条：监听读的是 settings，
+     *    而 `needsRuleBasedRouting` 只看 routingMode 与规则 ——
+     *    它不知道开关状态。
+     *
+     *    见 `routeListener` 里对此的处理：它**额外读一次开关**。
+     */
     await proxySettings().clear({})
   },
 
@@ -355,6 +676,12 @@ export const firefox: BrowserPlatform = {
         set(details: { value: string }): Promise<void>
       }
     ).set({ value: WEBRTC_LOCKED_POLICY })
+  },
+
+  registerListeners(
+    stateReader: () => Promise<{ enabled: boolean; settings: Settings }>,
+  ): void {
+    registerRouter(stateReader)
   },
 
   async unlockWebRtcPolicy(): Promise<void> {

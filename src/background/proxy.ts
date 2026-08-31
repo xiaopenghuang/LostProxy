@@ -56,7 +56,7 @@ export function isBlockedByControl(level: LevelOfControl | 'unknown'): boolean {
  */
 const BLOCKER_TO_ERROR: Record<PlatformBlocker, () => NormalizedError> = {
   privateBrowsingAccessRequired: () => errors.privateBrowsingAccessRequired(),
-  ruleBasedRoutingUnsupported: () => errors.ruleBasedRoutingUnsupported(),
+  routingPermissionRequired: () => errors.routingPermissionRequired(),
 }
 
 /**
@@ -71,9 +71,34 @@ const BLOCKER_TO_ERROR: Record<PlatformBlocker, () => NormalizedError> = {
  *
  * 返回 `null` 表示支持。
  */
-export function checkSupported(settings: Settings): NormalizedError | null {
-  const blocker = platform.supports(settings)
+export async function checkSupported(settings: Settings): Promise<NormalizedError | null> {
+  const blocker = await platform.supports(settings)
   return blocker === null ? null : BLOCKER_TO_ERROR[blocker]()
+}
+
+/**
+ * 索取这份配置所需的可选权限，然后复查是否已具备。
+ *
+ * ⚠️ **只能从用户手势的调用栈里调**（Firefox 的 `permissions.request()`
+ *    无手势时直接拒绝）。所以它出现在处理「用户点了开关 / 切了模式」
+ *    这两条消息的路径上，绝不在 `reconcile()` 之类的后台流程里。
+ *
+ * 返回 `null` 表示现在可以用了；返回错误表示用户拒绝了授权，
+ * 或者这个平台根本做不到。
+ *
+ * 为什么要在 request 之后**再查一次** `checkSupported`：`request()` 返回
+ * true 只说明弹窗被接受，而"能不能用"是由 `supports` 定义的 ——
+ * 两者之间可能还有别的条件（将来加了新 blocker 时尤其如此）。
+ * 以 `supports` 为准，`request` 只是尝试改变它的答案。
+ */
+export async function ensureSupported(settings: Settings): Promise<NormalizedError | null> {
+  const first = await checkSupported(settings)
+  if (first === null) return null
+
+  const granted = await platform.requestPermissions(settings)
+  if (!granted) return first
+
+  return checkSupported(settings)
 }
 
 /**
@@ -139,7 +164,7 @@ export async function enableProxy(settings: Settings): Promise<ApplyResult> {
    * 顺序颠倒的话，一个既没授权又开着分流的用户会先被要求去授权，
    * 授完权再被告知分流做不到 —— 两次往返。
    */
-  const unsupported = checkSupported(settings)
+  const unsupported = await ensureSupported(settings)
   if (unsupported !== null) {
     return { ok: false, error: unsupported }
   }
@@ -190,4 +215,20 @@ export function registerProxyErrorListener(
   handler: (error: NormalizedError) => void | Promise<void>,
 ): void {
   platform.onProxyError(handler)
+}
+
+/**
+ * 注册平台自己需要的长期监听。
+ *
+ * ⚠️ 必须在背景脚本**顶层同步**调用，与 registerProxyErrorListener 同理。
+ *    理由见 platform/types.ts 里 registerListeners 的注释 ——
+ *    Firefox 的事件页会被卸载，从业务流程里挂的监听不会被重挂。
+ *
+ * 这层封装存在的意义与 registerProxyErrorListener 一样：让 index.ts
+ * 只 import 一个模块（./proxy），不必知道 platform 这层的存在。
+ */
+export function registerPlatformListeners(
+  stateReader: () => Promise<{ enabled: boolean; settings: Settings }>,
+): void {
+  platform.registerListeners(stateReader)
 }

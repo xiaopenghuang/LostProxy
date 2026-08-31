@@ -118,12 +118,14 @@ __CHANGES__
 
 - Edge 自身的账号同步、搜索建议、Copilot 也会走代理（浏览器级代理的预期行为，可能触发账号风控）
 - 不支持 SOCKS 端口，不支持需要用户名密码认证的上游代理
-- **Firefox 版不支持智能分流**（浏览器内的直连规则清单）。Firefox 不支持内联 PAC 脚本，
-  硬做会引入「取不到脚本就静默直连」这个失败模式 —— 与本项目的 fail-closed 取向相反。
-  开着分流模式时扩展会**拒绝开启并说明**，而不是悄悄按全局代理处理。
-  把直连规则写进 Mihomo 配置反而更好：内核的规则系统支持 GEOIP、IP-CIDR、规则集订阅。
-  Firefox has no inline PAC support, so rule-based routing is refused with an explanation
-  rather than silently downgraded to global. Put those rules in your Mihomo config instead.
+- **Firefox 版的智能分流需要一次额外授权。** Firefox 不支持内联 PAC，分流走
+  `proxy.onRequest` —— 浏览器对每个请求问扩展一次，因此扩展能看到你访问的每个网址，
+  Firefox 必须先征得同意。第一次切到「智能」时弹一次，不给就继续用全局，
+  给了随时能在 `about:addons` 收回。刻意**不**在安装时一次要掉：默认只要
+  `http://127.0.0.1/*` 本身是这个项目的卖点，不该让只用全局代理的人替一个
+  可选功能付这个代价。
+  Smart routing on Firefox asks for one permission the first time you enable it,
+  because that browser has no inline PAC and must consult the extension per request.
 - **Firefox 版的运行时错误信号更弱**：`proxy.onError` 不带 `fatal` 字段，
   因此无法像 Chromium 那样区分「请求被拦住了」与「已经直连出去了」。
 - Firefox 真机隔离测试**尚未完成** —— Chromium 侧已实测双浏览器不同出口 ASN，

@@ -47,8 +47,12 @@ vi.mock('../src/background/platform', async () => {
   const refusing: BrowserPlatform = {
     ...chromium,
     id: 'firefox',
-    supports(settings: Settings): PlatformBlocker | null {
-      return needsRuleBasedRouting(settings) ? 'ruleBasedRoutingUnsupported' : null
+    async supports(settings: Settings): Promise<PlatformBlocker | null> {
+      return needsRuleBasedRouting(settings) ? 'routingPermissionRequired' : null
+    },
+    // 假平台里用户始终**拒绝**授权 —— 本文件验的是被拒之后的行为。
+    async requestPermissions(): Promise<boolean> {
+      return false
     },
   }
 
@@ -75,7 +79,7 @@ describe('🔴 保存设置：不许存下一份让开关点不动的配置', ()
     const response = await handleSaveSettings({ routingMode: 'smart' })
 
     expect(response.ok).toBe(false)
-    if (!response.ok) expect(response.error.code).toBe('ROUTING_MODE_UNSUPPORTED')
+    if (!response.ok) expect(response.error.code).toBe('ROUTING_PERMISSION_REQUIRED')
   })
 
   it('🔴 does not persist the unsupported mode', async () => {
@@ -134,7 +138,7 @@ describe('🔴 保存设置：不许存下一份让开关点不动的配置', ()
     const response = await handleEnable()
 
     expect(response.ok).toBe(false)
-    if (!response.ok) expect(response.error.code).toBe('ROUTING_MODE_UNSUPPORTED')
+    if (!response.ok) expect(response.error.code).toBe('ROUTING_PERMISSION_REQUIRED')
     // 没写入，也没把开关置为 ON —— 不能显示一个不存在的 ON。
     expect(proxySetting.setCalls).toHaveLength(0)
     expect(await getEnabledState()).toBe(false)

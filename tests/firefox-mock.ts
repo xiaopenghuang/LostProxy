@@ -116,6 +116,29 @@ export const ffProxySetting: FirefoxSettingMock<FirefoxProxyValue> =
 /** Firefox `privacy.network.webRTCIPHandlingPolicy` 的 mock 状态。 */
 export const ffWebRtcSetting: FirefoxSettingMock<string> = freshMock<string>()
 
+/**
+ * `browser.permissions` 的可控状态（可选主机权限）。
+ *
+ * 分成 `granted` 与 `willGrant` 两个旋钮，因为它们对应两件不同的事：
+ *   - `granted`   → `contains()` 的答案，也就是"现在有没有"
+ *   - `willGrant` → `request()` 弹窗时用户会不会点同意
+ *
+ * 合成一个的话就没法测「弹窗后用户同意，于是从没有变成有」这条路径 ——
+ * 而那正是最常见的真实流程。
+ */
+export const ffPermissions = {
+  /** `contains()` 返回什么。 */
+  granted: false,
+  /** `request()` 弹窗的结果。 */
+  willGrant: true,
+  /** 置入 Error 让下一次 contains() 抛错。 */
+  failNextContains: null as Error | null,
+  /** 置入 Error 让下一次 request() 抛错（模拟无用户手势）。 */
+  failNextRequest: null as Error | null,
+  containsCalls: 0,
+  requestCalls: 0,
+}
+
 /** `extension.isAllowedIncognitoAccess()` 的可控返回。 */
 export const ffIncognito = {
   /** 用户是否已授予隐私窗口访问权。 */
@@ -130,6 +153,67 @@ export const ffIncognito = {
 type ErrorListener = (error: unknown) => void
 
 let errorListeners: ErrorListener[] = []
+
+/** `proxy.onRequest` 的监听签名。 */
+export type RequestListener = (details: { url: string }) => unknown
+
+let requestListeners: Array<{ listener: RequestListener; filter: { urls: string[] } }> = []
+
+/** 已注册的 onRequest 监听数量。 */
+export function ffRequestListenerCount(): number {
+  return requestListeners.length
+}
+
+/** 最近注册的那个监听所用的过滤器 —— 用于断言它是 `<all_urls>`。 */
+export function ffRequestFilter(): { urls: string[] } | null {
+  return requestListeners.at(-1)?.filter ?? null
+}
+
+/**
+ * 清空浏览器侧的监听列表，**不通知扩展**。
+ *
+ * 用于模拟「事件页被卸载重建、监听没了，而模块里的缓存还留着」——
+ * 那种不一致会让一个信任缓存的实现静默失去分流能力。
+ */
+export function clearFirefoxRequestListeners(): void {
+  requestListeners = []
+}
+
+/** 设为 false 模拟 `proxy.onRequest` 不可用（没拿到 `<all_urls>`）。 */
+export const ffOnRequestPresent = { value: true }
+
+/**
+ * 模拟浏览器对一个 URL 询问「走代理还是直连」。
+ *
+ * 返回**第一个非空**答案，照 Firefox 对多个 onRequest 监听的语义
+ * （"第一个返回非空的赢"）。这样"同时挂了两个监听"这种 bug
+ * 在测试里会以"用了旧配置"的形式暴露出来。
+ *
+ * 全都不表态时返回 null —— 对应"浏览器按 proxy.settings 处理"。
+ *
+ * ⚠️ 是 async：监听可以返回 Promise（MDN 明确允许），
+ *    而本项目的 Firefox 监听确实返回 Promise，因为它要现读 storage。
+ */
+export async function askFirefoxRouter(url: string): Promise<unknown> {
+  for (const { listener } of requestListeners) {
+    const answer = await listener({ url })
+    if (answer !== undefined && answer !== null) return answer
+  }
+  return null
+}
+
+/**
+ * 取第一个监听的**原始**返回值，不做 null 归一。
+ *
+ * 用来区分 `undefined`（不表态，让浏览器自己的设置生效）与
+ * `{type:'direct'}`（强制直连）—— 两者在 `askFirefoxRouter` 眼里都是"空"，
+ * 但语义完全不同：后者会越权覆盖用户自己配的系统代理（ADR-18）。
+ */
+export async function ffRawRouterAnswer(url: string): Promise<unknown> {
+  const first = requestListeners[0]
+  if (first === undefined) return null
+  return first.listener({ url })
+}
 
 /** 已注册的 proxy.onError 监听器数量。 */
 export function ffErrorListenerCount(): number {
@@ -153,6 +237,7 @@ export const ffOnErrorPresent = { value: true }
  */
 export function installFirefoxMock(): void {
   errorListeners = []
+  requestListeners = []
   Object.assign(ffProxySetting, freshMock<FirefoxProxyValue>())
   Object.assign(ffWebRtcSetting, freshMock<string>())
   ffIncognito.allowed = true
@@ -160,10 +245,43 @@ export function installFirefoxMock(): void {
   ffIncognito.missing = false
   ffIncognito.calls = 0
   ffOnErrorPresent.value = true
+  ffOnRequestPresent.value = true
+  /*
+   * 默认**已授权**。
+   *
+   * 与 `ffIncognito.allowed = true` 同一个考虑：默认值该是"一切正常"，
+   * 让每条测试只需要设置它关心的那个偏离项。若默认是未授权，
+   * 每条测跟权限无关的测试都得先加一行授权，那种噪音会掩盖真正的意图。
+   */
+  ffPermissions.granted = true
+  ffPermissions.willGrant = true
+  ffPermissions.failNextContains = null
+  ffPermissions.failNextRequest = null
+  ffPermissions.containsCalls = 0
+  ffPermissions.requestCalls = 0
 
   const proxyApi: Record<string, unknown> = {
     settings: makeSettingApi(ffProxySetting),
   }
+
+  /*
+   * onRequest 与 onError 都用 getter，这样测试可以在装好 mock 之后再决定
+   * 「这个 API 存不存在」—— 对应没拿到可选权限、或 manifest 漏权限的场景。
+   */
+  Object.defineProperty(proxyApi, 'onRequest', {
+    get: () =>
+      ffOnRequestPresent.value
+        ? {
+            addListener: (listener: RequestListener, filter: { urls: string[] }): void => {
+              requestListeners.push({ listener, filter })
+            },
+            removeListener: (listener: RequestListener): void => {
+              requestListeners = requestListeners.filter((r) => r.listener !== listener)
+            },
+          }
+        : undefined,
+    configurable: true,
+  })
 
   /*
    * onError 用 getter 而不是固定值，这样测试可以在装好 mock 之后
@@ -197,6 +315,28 @@ export function installFirefoxMock(): void {
           throw error
         }
         return ffIncognito.allowed
+      },
+    },
+    permissions: {
+      contains: async (): Promise<boolean> => {
+        ffPermissions.containsCalls += 1
+        if (ffPermissions.failNextContains) {
+          const error = ffPermissions.failNextContains
+          ffPermissions.failNextContains = null
+          throw error
+        }
+        return ffPermissions.granted
+      },
+      request: async (): Promise<boolean> => {
+        ffPermissions.requestCalls += 1
+        if (ffPermissions.failNextRequest) {
+          const error = ffPermissions.failNextRequest
+          ffPermissions.failNextRequest = null
+          throw error
+        }
+        // 真实行为：用户同意后权限就真的有了。
+        if (ffPermissions.willGrant) ffPermissions.granted = true
+        return ffPermissions.willGrant
       },
     },
   }

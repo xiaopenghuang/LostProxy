@@ -453,7 +453,7 @@ describe('🔴 handleSaveSettings · 重新写入失败必须上报并回滚', (
     expect((await getSettings()).proxyPort).toBe(1080)
   })
 
-  it('checkSupported is consulted with the merged settings, not just the patch', () => {
+  it('checkSupported is consulted with the merged settings, not just the patch', async () => {
     /*
      * 这条锁的是真机上那个死角修复的一个关键细节。
      *
@@ -483,7 +483,7 @@ describe('🔴 handleSaveSettings · 重新写入失败必须上报并回滚', (
     }
 
     // 只有 patch：看不出需要分流。
-    expect(checkSupported({ ...DEFAULT_SETTINGS, routingMode: 'smart' })).toBeNull()
+    expect(await checkSupported({ ...DEFAULT_SETTINGS, routingMode: 'smart' })).toBeNull()
 
     // merge 之后：规则来自已存设置，这才是真正要判的那份配置。
     const merged: Settings = { ...stored, routingMode: 'smart' }

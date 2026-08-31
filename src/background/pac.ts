@@ -126,6 +126,55 @@ export function sanitizeRules(rules: readonly string[]): string[] {
 }
 
 /**
+ * 一个主机名该直连还是走代理。
+ *
+ * 🔴 **这是分流判定的唯一真源**，两个平台共用：
+ *
+ *   - Chromium：`buildPacScript` 把它的逻辑**复刻**进生成的 PAC 脚本
+ *     （PAC 在浏览器的独立 JS 环境里跑，没法直接调我们的函数）
+ *   - Firefox：`platform/firefox.ts` 的 `proxy.onRequest` 监听**直接调它**
+ *
+ * 「复刻」是个真实的风险 —— 两份实现可能漂移，而漂移的后果是同一条规则
+ * 在两个浏览器上行为不同。所以 `tests/pac.test.ts` 里有一组测试
+ * 拿同一批 host 同时喂给**本函数**和**执行生成脚本**的结果，
+ * 逐个比对两者是否一致。那组测试是这个复刻关系的安全带。
+ *
+ * 匹配语义（只有这两种）：
+ *   - `*.edu.cn`    → 后缀匹配（`a.edu.cn` 与 `edu.cn` 都算命中）
+ *   - `lib.foo.edu` → 精确匹配
+ *
+ * 更复杂的（正则、IP 段、端口）留给内核的规则系统去做，它本来就比我们擅长。
+ *
+ * @param host 主机名。调用方无需预先小写化，本函数自己处理。
+ * @param rules **已清洗过**的规则（`sanitizeRules` 的输出）。
+ *   刻意收清洗后的而不是原始清单：这个函数会被每个请求调用一次，
+ *   把清洗放进来意味着每次请求都重跑一遍白名单与 Punycode 转换。
+ */
+export function shouldBypassProxy(host: string, rules: readonly string[]): boolean {
+  const lower = host.toLowerCase()
+
+  // 本机与无点主机名直连 —— 与 bypass 清单保持一致（ADR-02）。
+  // 否则扩展访问 Controller 的请求会被送进代理形成自环。
+  if (lower === 'localhost' || !lower.includes('.')) return true
+  for (const local of LOOPBACK_HOSTS) {
+    if (lower === local) return true
+  }
+
+  for (const rule of rules) {
+    if (rule.startsWith('*.')) {
+      // `*.edu.cn` → 后缀 `.edu.cn`，同时命中裸域 `edu.cn`。
+      const suffix = rule.slice(1)
+      if (lower.length >= suffix.length && lower.endsWith(suffix)) return true
+      if (lower === suffix.slice(1)) return true
+    } else if (lower === rule) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
  * 这份配置是否真的需要「浏览器内规则分流」。
  *
  * 🔴 **单一真源。** 这个谓词有两个调用方，它们必须永远给出同一个答案：

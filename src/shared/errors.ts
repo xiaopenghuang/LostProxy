@@ -61,17 +61,19 @@ export const errors = {
     makeError('PROXY_PRIVATE_BROWSING_REQUIRED', 'error.privateBrowsingAccessRequired'),
 
   /**
-   * 该平台做不到浏览器内规则分流。
+   * 规则分流需要一个用户拒绝了的可选权限。
    *
    * 🔴 这条错误的存在本身就是一个安全决策：宁可**拒绝开启**并报错，
    *   也不静默退回全局代理。后者在网络上"能用"，却会让用户配的直连清单
    *   被无声忽略 —— 而他完全看不出来。
    *
-   * 文案给两条出路（切回全局 / 把规则写进内核配置），并说明后者其实更好：
-   * 内核的规则系统本来就比浏览器 PAC 强得多。
+   * 文案取向是**尊重用户的选择**：走到这里说明他看过弹窗并拒绝了，
+   * 所以不该再劝一遍"你必须给"，而是说清为什么要这个权限、
+   * 以及不给的话有哪两条路可走。其中「写进内核配置」那条其实更好 ——
+   * 内核的规则系统比浏览器强得多。
    */
-  ruleBasedRoutingUnsupported: (): NormalizedError =>
-    makeError('ROUTING_MODE_UNSUPPORTED', 'error.ruleBasedRoutingUnsupported'),
+  routingPermissionRequired: (): NormalizedError =>
+    makeError('ROUTING_PERMISSION_REQUIRED', 'error.routingPermissionRequired'),
 
   /** 写入 chrome.proxy 设置时 API 本身失败。 */
   proxyWriteFailed: (reason: string): NormalizedError =>

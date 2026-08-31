@@ -37,7 +37,7 @@ import {
 } from './mihomo'
 import { inspectWebRtcPolicy, syncWebRtcLock } from './privacy'
 import {
-  checkSupported,
+  ensureSupported,
   disableProxy,
   enableProxy,
   inspectProxy,
@@ -396,7 +396,7 @@ export async function handleSaveSettings(
    *    这也是此方最初把两件事塞进一个 preflight 时埋下的问题。
    */
   const merged = { ...before, ...patch }
-  const unsupported = checkSupported(merged)
+  const unsupported = await ensureSupported(merged)
   if (unsupported !== null) {
     return { ok: false, error: unsupported }
   }
