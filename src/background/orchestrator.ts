@@ -36,7 +36,14 @@ import {
   type ProbeResult,
 } from './mihomo'
 import { inspectWebRtcPolicy, syncWebRtcLock } from './privacy'
-import { disableProxy, enableProxy, inspectProxy, isBlockedByControl, type ProxyInspection } from './proxy'
+import {
+  checkSupported,
+  disableProxy,
+  enableProxy,
+  inspectProxy,
+  isBlockedByControl,
+  type ProxyInspection,
+} from './proxy'
 import {
   getEnabledState,
   getLastError,
@@ -370,6 +377,29 @@ export async function handleSaveSettings(
   patch: Partial<Settings>,
 ): Promise<Response<ResponsePayloads['SAVE_SETTINGS']>> {
   const before = await getSettings()
+
+  /*
+   * 🔴 **先校验「这个浏览器做不做得到」，再落盘。**
+   *
+   * 这道闸门补的是真机上踩到的一个死角：Firefox 用户在代理**关着**时
+   * 把模式切成「智能」，保存成功（代理关着，不走重新写入那条路），
+   * 然后开关就再也点不动了 —— `handleEnable` 每次都被能力检查拦住。
+   *
+   * 一个**能存下去、却让功能失效**的设置是最糟的交互形态：
+   * 用户看不出自己做错了什么，只知道开关坏了。
+   *
+   * 所以判据必须在**写入 storage 之前**生效，与代理当前开着还是关着无关。
+   *
+   * ⚠️ 这里只查能力（`supports`），**不查授权**（`preflight`）。
+   *    把两者混在一起会让一个没授予隐私窗口权限的 Firefox 用户
+   *    连端口都改不了 —— 而改端口跟那个权限毫无关系。
+   *    这也是此方最初把两件事塞进一个 preflight 时埋下的问题。
+   */
+  const merged = { ...before, ...patch }
+  const unsupported = checkSupported(merged)
+  if (unsupported !== null) {
+    return { ok: false, error: unsupported }
+  }
 
   const result = await saveSettings(patch)
   if (!result.ok) {

@@ -227,15 +227,24 @@ export const chromium: BrowserPlatform = {
   id: 'chromium',
 
   /**
-   * Chromium 没有任何写入前置条件。
+   * Chromium 支持全部配置形态。
    *
-   * 内联 PAC 原生支持（所以规则分流可用），也不需要额外的用户授权 ——
+   * 内联 PAC 原生支持，所以规则分流可用 —— 这正是 `firefox.ts` 里
+   * 那条限制在这边不存在的原因。
+   */
+  supports(): PlatformBlocker | null {
+    return null
+  },
+
+  /**
+   * Chromium 没有任何写入前置授权。
+   *
    * `"proxy"` 权限在安装时就一次性给了，incognito 由 `scope: 'regular'`
-   * 自动覆盖（ADR-07）。
+   * 自动覆盖（ADR-07）—— 不需要用户再点什么。
    *
-   * 刻意保留这个空实现而不把 `preflight` 做成可选方法：可选方法会让
-   * 调用方写成 `platform.preflight?.(s)`，而那种写法在**新增一个平台
-   * 忘了实现它**时完全静默 —— 恰好是这一层最不该有的失败方式。
+   * 刻意保留这两个空实现而不把它们做成可选方法：可选方法会让调用方写成
+   * `platform.preflight?.()`，而那种写法在**新增一个平台忘了实现它**时
+   * 完全静默 —— 恰好是这一层最不该有的失败方式。
    */
   async preflight(): Promise<PlatformBlocker | null> {
     return null

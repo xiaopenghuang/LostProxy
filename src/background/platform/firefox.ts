@@ -220,41 +220,39 @@ export const firefox: BrowserPlatform = {
   id: 'firefox',
 
   /**
-   * 两个前置条件，顺序有讲究。
+   * 🔴 Firefox 只支持 `autoConfigUrl`，**没有内联 PAC**，所以做不到规则分流。
    *
-   * 先查「能不能做分流」再查「有没有权限」：前者是**配置问题**
-   * （用户改一下模式即可，与浏览器权限无关），后者是**授权问题**。
-   * 若顺序颠倒，一个既没授权又开着分流的用户会先被要求去授权，
-   * 授完权再被告知分流做不到 —— 两次往返。
+   * 为什么不用 autoConfigUrl 绕过去：那需要把脚本放到一个 URL 上。
+   * 用 `data:` / `moz-extension:` URL 都要引入新的失败模式
+   * （取不到脚本 → PAC 默认 fail-open → **静默直连**），
+   * 而消除这个失败模式正是 ADR-33 当初选择内联 data 的理由。
+   * 在一个以"不静默泄漏"为卖点的工具里，把刚堵上的洞重新挖开
+   * 换一个功能，方向是反的。
+   *
+   * 正确的做法是 `proxy.onRequest`（每个请求跑一次我们的 JS，
+   * 顺带把 PAC 的字符串注入面整个消掉）。它需要 `<all_urls>` 主机权限，
+   * 也就是安装时会多一句「访问您在所有网站上的数据」——
+   * 那是个值得单独跟用户讲清楚的取舍，所以留给后续版本。
+   *
+   * 在它落地之前，**拒绝**比静默降级正确。而且这个拒绝现在发生在
+   * **保存设置**那一刻，用户不会存下一份让开关点不动的配置。
    */
-  async preflight(settings: Settings): Promise<PlatformBlocker | null> {
-    /*
-     * 🔴 Firefox 只支持 `autoConfigUrl`，**没有内联 PAC**。
-     *
-     * 为什么不用 autoConfigUrl 绕过去：那需要把脚本放到一个 URL 上。
-     * 用 `data:` / `moz-extension:` URL 都要引入新的失败模式
-     * （取不到脚本 → PAC 默认 fail-open → **静默直连**），
-     * 而消除这个失败模式正是 ADR-33 当初选择内联 data 的理由。
-     * 在一个以"不静默泄漏"为卖点的工具里，把刚堵上的洞重新挖开
-     * 换一个功能，方向是反的。
-     *
-     * 正确的做法是 `proxy.onRequest`（每个请求跑一次我们的 JS，
-     * 顺带把 PAC 的字符串注入面整个消掉），那是后续版本的事。
-     * 在它落地之前，**拒绝**比静默降级正确。
-     */
-    if (needsRuleBasedRouting(settings)) {
-      return 'ruleBasedRoutingUnsupported'
-    }
+  supports(settings: Settings): PlatformBlocker | null {
+    return needsRuleBasedRouting(settings) ? 'ruleBasedRoutingUnsupported' : null
+  },
 
-    /*
-     * MDN：「If your extension doesn't have private window permission,
-     *        calls to proxy.settings.set() throw an exception.」
-     *
-     * 探测失败（API 不存在、查询抛错）时返回 null 而不是报 blocker ——
-     * 与 `inspectProxy` 把查询失败降级成 'unknown' 同一个道理：
-     * 探测不出来不等于写不进去，而放弃写入的代价是泄漏风险（ADR-03）。
-     * 让 set() 自己去抛，那条路径有正常的错误处理。
-     */
+  /**
+   * 隐私窗口访问权。
+   *
+   * MDN：「If your extension doesn't have private window permission,
+   *        calls to proxy.settings.set() throw an exception.」
+   *
+   * 探测失败（API 不存在、查询抛错）时返回 null 而不是报 blocker ——
+   * 与 `inspectProxy` 把查询失败降级成 'unknown' 同一个道理：
+   * 探测不出来不等于写不进去，而放弃写入的代价是泄漏风险（ADR-03）。
+   * 让 set() 自己去抛，那条路径有正常的错误处理。
+   */
+  async preflight(): Promise<PlatformBlocker | null> {
     try {
       const allowed = await extensionApi().isAllowedIncognitoAccess()
       return allowed ? null : 'privateBrowsingAccessRequired'

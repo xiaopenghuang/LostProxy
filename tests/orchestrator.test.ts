@@ -28,7 +28,8 @@ import {
   pickError,
   reconcile,
 } from '../src/background/orchestrator'
-import { inspectProxy, type ProxyInspection } from '../src/background/proxy'
+import { checkSupported, inspectProxy, type ProxyInspection } from '../src/background/proxy'
+import { needsRuleBasedRouting } from '../src/background/pac'
 import { errors } from '../src/shared/errors'
 import {
   getEnabledState,
@@ -39,7 +40,7 @@ import {
   setLastError,
 } from '../src/background/storage'
 import { DEFAULT_SETTINGS } from '../src/shared/constants'
-import type { LevelOfControl, NormalizedError } from '../src/shared/types'
+import type { LevelOfControl, NormalizedError, Settings } from '../src/shared/types'
 import { proxySetting, webRtcSetting } from './setup'
 
 const SECRET = 'sk-orchestrator-secret-must-not-escape'
@@ -450,6 +451,46 @@ describe('🔴 handleSaveSettings · 重新写入失败必须上报并回滚', (
 
     expect(response.ok).toBe(true)
     expect((await getSettings()).proxyPort).toBe(1080)
+  })
+
+  it('checkSupported is consulted with the merged settings, not just the patch', () => {
+    /*
+     * 这条锁的是真机上那个死角修复的一个关键细节。
+     *
+     * 死角本身：Firefox 用户在代理**关着**时把模式切成「智能」，
+     * 保存成功，然后开关就再也点不动了 —— 一个能存下去、
+     * 却让功能失效的设置。修法是在**落盘之前**查一次平台能力。
+     *
+     * 而查的必须是 **merge 之后**的完整设置，不是 patch 本身：
+     * 用户在 Popup 上点「智能」时，patch 里只有 `{routingMode:'smart'}`，
+     * 规则清单在**已存的设置**里。只看 patch 会得出"没有规则、
+     * 等价于全局、放行"，于是死角原封不动地复发。
+     *
+     * ⚠️ 覆盖缺口，如实记录：测试跑在 chromium 平台上，`supports` 恒为 null，
+     *    所以这条**不能**从 handleSaveSettings 的返回值上验出来 ——
+     *    那条分支在 chromium 上永远不命中。这里直接验 checkSupported
+     *    在 merge 语义下的行为；Firefox 侧的能力断言在
+     *    platform-firefox.test.ts，两边合起来才覆盖完整。
+     *
+     *    要在 orchestrator 层面真正端到端验这条，需要让测试能切换平台，
+     *    而那会引入测试间的顺序依赖（platform 是构建期常量）。
+     *    此方选择留这个缺口并写明，而不是加一个脆弱的 spy。
+     */
+    const stored: Settings = {
+      ...DEFAULT_SETTINGS,
+      directRules: ['*.edu.cn'],
+      routingMode: 'global',
+    }
+
+    // 只有 patch：看不出需要分流。
+    expect(checkSupported({ ...DEFAULT_SETTINGS, routingMode: 'smart' })).toBeNull()
+
+    // merge 之后：规则来自已存设置，这才是真正要判的那份配置。
+    const merged: Settings = { ...stored, routingMode: 'smart' }
+    // chromium 支持一切，所以这里是 null —— 断言的是它**收到了**完整配置，
+    // 由 needsRuleBasedRouting 判定为"需要分流"。
+    expect(needsRuleBasedRouting(merged)).toBe(true)
+    expect(needsRuleBasedRouting({ ...DEFAULT_SETTINGS, routingMode: 'smart' })).toBe(false)
   })
 
   it('keeps the secret intact across a rollback', async () => {

@@ -145,7 +145,32 @@ export interface BrowserPlatform {
   readonly id: PlatformId
 
   /**
-   * 写入前的前置条件检查。返回 `null` 表示这个平台在这份配置下可以写。
+   * 这个平台**能不能支持这份配置**。返回 `null` 表示能。
+   *
+   * 🔴 与 `preflight` 刻意分成两个方法，因为它们回答的是不同的问题：
+   *
+   *   - `supports`  → 「这份配置在这个浏览器上**有意义吗**」（静态能力）
+   *   - `preflight` → 「**现在**允许我写吗」（动态授权）
+   *
+   * 此方最初把两者混成一个 `preflight(settings)`，那是个真 bug：
+   * 保存设置时若也调它，一个没授予隐私窗口权限的 Firefox 用户会
+   * **连端口都改不了** —— 因为授权缺失被当成了"这份配置不合法"。
+   * 反过来，只在开启代理时才检查能力，用户就能存下一个
+   * 让开关永远点不动的设置（真机上踩到的死角）。
+   *
+   * 拆开之后各归各位：
+   *   - 保存设置时只查 `supports` —— 不让用户存下一份这个浏览器做不到的配置
+   *   - 开启代理时查两者
+   *
+   * 声明为**同步**：它是一个纯粹的能力判断，不该有 IO。做成 async 会诱使
+   * 将来有人在这里发请求，而「保存设置」这条路径上多一次网络等待是没道理的。
+   */
+  supports(settings: Settings): PlatformBlocker | null
+
+  /**
+   * **现在**能不能写。返回 `null` 表示能。
+   *
+   * 只管授权类的前置条件，不重复 `supports` 的能力判断。
    *
    * ⚠️ 这里只做**探测**，不做判断该报什么错 —— 那是共享层的事
    *    （见 `PlatformBlocker` 的注释）。
@@ -158,7 +183,7 @@ export interface BrowserPlatform {
    * 指导意义 —— 而这恰恰是**用户自己一勾就能修好**的问题。
    * 提前探测才能给出「去哪儿勾哪个框」的具体指引。
    */
-  preflight(settings: Settings): Promise<PlatformBlocker | null>
+  preflight(): Promise<PlatformBlocker | null>
 
   /**
    * 读取浏览器当前的代理状态并与期望配置比对。

@@ -146,10 +146,10 @@ describe('buildProxyConfig', () => {
 // 前置条件
 // ===========================================================================
 
-describe('preflight · 隐私窗口访问权', () => {
+describe('preflight · 隐私窗口访问权（授权）', () => {
   it('passes when the user has granted private browsing access', async () => {
     ffIncognito.allowed = true
-    expect(await firefox.preflight(settings)).toBeNull()
+    expect(await firefox.preflight()).toBeNull()
   })
 
   it('🔴 reports a blocker when access has not been granted', async () => {
@@ -162,7 +162,7 @@ describe('preflight · 隐私窗口访问权', () => {
      * 自己修好**的问题（about:addons → 勾一个框）。
      */
     ffIncognito.allowed = false
-    expect(await firefox.preflight(settings)).toBe('privateBrowsingAccessRequired')
+    expect(await firefox.preflight()).toBe('privateBrowsingAccessRequired')
   })
 
   it('🔴 does not block when the probe itself fails', async () => {
@@ -172,42 +172,61 @@ describe('preflight · 隐私窗口访问权', () => {
      * 所以先尝试保护，让 set() 自己去抛 —— 那条路径有正常的错误处理。
      */
     ffIncognito.failNext = new Error('probe exploded')
-    expect(await firefox.preflight(settings)).toBeNull()
+    expect(await firefox.preflight()).toBeNull()
   })
 
   it('does not block when the API does not exist at all', async () => {
     // 同上：API 缺失是我们对环境的认知不足，不是"已知写不进去"。
     removeIncognitoApi()
-    expect(await firefox.preflight(settings)).toBeNull()
+    expect(await firefox.preflight()).toBeNull()
+  })
+
+  it('🔴 does not depend on the settings at all', async () => {
+    /*
+     * `preflight` 现在**不收参数**，这是刻意的。
+     *
+     * 此方最初把「能不能做分流」和「有没有授权」塞进同一个
+     * `preflight(settings)`，那导致两个方向的 bug：
+     *   - 保存设置时若调它，没授权的用户**连端口都改不了**
+     *     —— 而改端口跟隐私窗口权限毫无关系；
+     *   - 只在开启时查能力，用户就能存下一个让开关点不动的设置。
+     *
+     * 签名上没有 settings 参数，就没法再把两件事混起来。
+     */
+    expect(firefox.preflight.length).toBe(0)
   })
 })
 
-describe('🔴 preflight · 规则分流不被支持', () => {
+describe('🔴 supports · 规则分流不被支持（能力）', () => {
   const smart = (rules: readonly string[]): Settings => ({
     ...settings,
     routingMode: 'smart',
     directRules: rules,
   })
 
-  it('🔴 refuses smart routing with usable rules', async () => {
+  it('🔴 refuses smart routing with usable rules', () => {
     /*
      * 这是本文件第二重要的一条。
      *
-     * 必须**拒绝开启**而不是静默退回全局代理。退回全局在网络上"能用"，
+     * 必须**拒绝**而不是静默退回全局代理。退回全局在网络上"能用"，
      * 但会让用户配的直连清单被无声忽略 —— 他本该直连的校内站点
      * 全部走了代理，而 UI 显示一切正常。
      *
      * 这不是"没保护"，是"保护成了另一种样子"，且用户看不出来 ——
      * 正是本项目所有失败模式里最坏的那一类。
      */
-    expect(await firefox.preflight(smart(['*.edu.cn']))).toBe('ruleBasedRoutingUnsupported')
+    expect(firefox.supports(smart(['*.edu.cn']))).toBe('ruleBasedRoutingUnsupported')
   })
 
-  it('allows global mode', async () => {
-    expect(await firefox.preflight({ ...settings, routingMode: 'global' })).toBeNull()
+  it('allows global mode', () => {
+    expect(firefox.supports({ ...settings, routingMode: 'global' })).toBeNull()
   })
 
-  it('allows smart mode when there are no usable rules', async () => {
+  it('allows direct mode', () => {
+    expect(firefox.supports({ ...settings, routingMode: 'direct' })).toBeNull()
+  })
+
+  it('allows smart mode when there are no usable rules', () => {
     /*
      * 与 Chromium 的 buildProxyConfig 保持同一个判据（needsRuleBasedRouting）：
      * 空清单或全是非法规则时，行为等价于全局，此时没有任何东西会被丢掉，
@@ -217,23 +236,24 @@ describe('🔴 preflight · 规则分流不被支持', () => {
      *   改写成 `routingMode === 'smart'` 就拦，Firefox 用户开着一个
      *   空规则清单就再也开不了代理了 —— 而 Chromium 用户完全正常。
      */
-    expect(await firefox.preflight(smart([]))).toBeNull()
-    expect(await firefox.preflight(smart(["bad'", 'also:bad']))).toBeNull()
+    expect(firefox.supports(smart([]))).toBeNull()
+    expect(firefox.supports(smart(["bad'", 'also:bad']))).toBeNull()
   })
 
-  it('🔴 checks routing before asking for permission', async () => {
+  it('🔴 is synchronous and does not touch the incognito API', () => {
     /*
-     * 顺序有讲究：一个既没授权、又开着分流的用户，应当先被告知
-     * "分流做不到"（改个模式即可），而不是先被要求去授权、
-     * 授完权再发现分流还是不行 —— 两次往返。
+     * 能力判断是纯函数，不该有 IO。做成 async 会诱使将来有人在这里
+     * 发请求，而「保存设置」这条路径上多一次网络等待是没道理的。
      *
-     * 断言方式是「压根没查权限」，比断言返回值更强：
-     * 它证明的是短路真的发生了。
+     * 顺带断言它**没有**去查授权：两者拆开的意义就在这里。
      */
-    ffIncognito.allowed = false
     ffIncognito.calls = 0
 
-    expect(await firefox.preflight(smart(['*.edu.cn']))).toBe('ruleBasedRoutingUnsupported')
+    const result = firefox.supports(smart(['*.edu.cn']))
+
+    expect(result).toBe('ruleBasedRoutingUnsupported')
+    // 同步返回，不是 Promise。
+    expect(result).not.toBeInstanceOf(Promise)
     expect(ffIncognito.calls).toBe(0)
   })
 })
@@ -530,6 +550,64 @@ describe('🔴🔴 Firefox 的 WebRTC 锁值', () => {
 })
 
 // ===========================================================================
+// 🔴 死角：不许存下一份让开关点不动的设置
+// ===========================================================================
+
+describe('🔴 supports 必须能在「保存设置」路径上单独使用', () => {
+  /*
+   * ## 真机上踩到的死角
+   *
+   * Firefox 用户在代理**关着**时把模式切成「智能」：
+   *   - 保存成功（代理关着，不走重新写入那条路）
+   *   - 然后开关就再也点不动了 —— handleEnable 每次被能力检查拦住
+   *
+   * 一个**能存下去、却让功能失效**的设置是最糟的交互形态：
+   * 用户看不出自己做错了什么，只知道开关坏了。
+   *
+   * 修法是让「保存设置」在**落盘之前**也查一次能力。
+   * 而那要求 `supports` 满足两个条件，下面各锁一条：
+   *
+   *   1. 不需要 await（保存路径上不该多一次网络等待）
+   *   2. 不牵连授权（改端口跟隐私窗口权限毫无关系）
+   *
+   * orchestrator.test.ts 里有对应的行为测试；这里锁的是平台契约本身
+   * 具备被那样使用的形状。
+   */
+
+  it('🔴 判据与 applyProxy 用的是同一个，不会各说各话', () => {
+    /*
+     * 若 supports 说"不支持"而 applyProxy 照样能写，或者反过来，
+     * 就会出现「存不进去但其实能用」或「存进去了但写不了」。
+     * 两者都必须由同一个 needsRuleBasedRouting 决定 ——
+     * platform-boundary.test.ts 从源码层面锁了这一点，
+     * 这里从行为层面再验一次。
+     */
+    const smart: Settings = { ...settings, routingMode: 'smart', directRules: ['*.edu.cn'] }
+    const empty: Settings = { ...settings, routingMode: 'smart', directRules: [] }
+
+    // 有规则 → 不支持
+    expect(firefox.supports(smart)).toBe('ruleBasedRoutingUnsupported')
+    // 无规则 → 支持，且此时 buildProxyConfig 产出的就是普通全局配置
+    expect(firefox.supports(empty)).toBeNull()
+    expect(buildProxyConfig(empty).proxyType).toBe('manual')
+  })
+
+  it('🔴 不支持的配置下 supports 先拦，用不着碰浏览器', () => {
+    /*
+     * 保存设置被 supports 拦住时，**一次浏览器写入都不该发生** ——
+     * 否则就是「报了错但还是写了」，比不报错更糟。
+     */
+    ffProxySetting.setCalls = []
+
+    expect(firefox.supports({ ...settings, routingMode: 'smart', directRules: ['*.edu.cn'] })).toBe(
+      'ruleBasedRoutingUnsupported',
+    )
+
+    expect(ffProxySetting.setCalls).toHaveLength(0)
+  })
+})
+
+// ===========================================================================
 // 契约完整性
 // ===========================================================================
 
@@ -539,6 +617,7 @@ describe('契约', () => {
   })
 
   it.each([
+    'supports',
     'preflight',
     'readProxyState',
     'applyProxy',

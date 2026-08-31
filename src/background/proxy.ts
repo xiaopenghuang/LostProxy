@@ -60,6 +60,23 @@ const BLOCKER_TO_ERROR: Record<PlatformBlocker, () => NormalizedError> = {
 }
 
 /**
+ * 当前浏览器**能不能支持**这份配置。
+ *
+ * 🔴 与「现在能不能写」是两件事，见 `platform/types.ts` 里 `supports` 的注释。
+ *
+ * 供**保存设置**路径调用：不让用户存下一份这个浏览器做不到的配置。
+ * 少了这道闸门，Firefox 用户可以在代理关着时把模式切成「智能」——
+ * 保存会成功，然后开关就再也点不动了（真机上踩到的死角）。
+ * 那是最糟的一种交互：一个能存下去、却让功能失效的设置。
+ *
+ * 返回 `null` 表示支持。
+ */
+export function checkSupported(settings: Settings): NormalizedError | null {
+  const blocker = platform.supports(settings)
+  return blocker === null ? null : BLOCKER_TO_ERROR[blocker]()
+}
+
+/**
  * 巡检浏览器当前代理状态。
  *
  * 查询失败时返回 `'unknown'` 而不是抛错 —— 这是个**决策**，所以在共享层：
@@ -105,20 +122,29 @@ export async function enableProxy(settings: Settings): Promise<ApplyResult> {
   // 依照 fail-closed 精神，先尝试保护，写失败了再报错。
 
   /*
-   * 平台级前置条件。
+   * 平台级前置条件，两道。
    *
    * 顺序上放在 levelOfControl 之后是刻意的：那两条是「浏览器不让我们写」，
-   * 而这一条是「这个平台在这份配置下做不到」。前者更根本 ——
-   * 被 Policy 锁死时，谈论"要不要授予私密窗口权限"没有意义。
+   * 而这两条是平台自身的限制。前者更根本 —— 被 Policy 锁死时，
+   * 谈论"要不要授予隐私窗口权限"没有意义。
    *
    * 🔴 这里**不能**沿用「unknown 不阻断」那条豁免。两者的性质相反：
    *   查询失败时我们不知道写入会不会成功，试一下的代价只是可能报错；
-   *   而 blocker 是**已知**写不进去（Firefox 无私密窗口权限时 set() 必抛）
+   *   而 blocker 是**已知**写不进去（Firefox 无隐私窗口权限时 set() 必抛）
    *   或**已知**写下去是错的（不支持内联 PAC 时按全局写会静默丢掉用户的
    *   直连规则）。后者尤其危险：它不是"没保护"，而是"保护成了另一种样子"，
    *   且用户看不出来。
+   *
+   * 先能力后授权：能力问题用户改个设置就好，授权问题要去浏览器里点。
+   * 顺序颠倒的话，一个既没授权又开着分流的用户会先被要求去授权，
+   * 授完权再被告知分流做不到 —— 两次往返。
    */
-  const blocker = await platform.preflight(settings)
+  const unsupported = checkSupported(settings)
+  if (unsupported !== null) {
+    return { ok: false, error: unsupported }
+  }
+
+  const blocker = await platform.preflight()
   if (blocker !== null) {
     return { ok: false, error: BLOCKER_TO_ERROR[blocker]() }
   }
