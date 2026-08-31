@@ -247,9 +247,18 @@ el.toggle?.addEventListener('click', async () => {
   if (response.ok) {
     render(response.data)
   } else {
-    // 失败：先显示原因，再拉一次真实状态把开关回滚到事实上的位置。
-    showAlert(response.error)
+    /*
+     * 先拉真实状态把开关回滚到事实上的位置，再显示失败原因。
+     *
+     * 这个顺序原本是反的。它当时能工作，但靠的是巧合 ——
+     * handleEnable / handleDisable 恰好会把错误写进 lastError，
+     * 于是 refresh 重新读到并显示了它。也就是说 UI 层默默依赖了
+     * 「background 会持久化这个错误」这一点。哪天那个决定变了，
+     * 这里就会变成"错误闪一下就消失"，而且没有任何测试会红。
+     * 与 SELECT_NODE 统一成同一个顺序，去掉这个隐式耦合。
+     */
     await refresh()
+    showAlert(response.error)
   }
 
   setBusy(false)
@@ -286,11 +295,21 @@ el.nodeList?.addEventListener('click', async (event) => {
 
   if (response.ok) {
     render(response.data)
-  } else {
-    showAlert(response.error)
-    // 失败后拉一次真实状态：内核可能已经部分生效，UI 必须回到事实。
-    await refresh()
+    return
   }
+
+  /*
+   * 🔴 顺序不能反：先 refresh 回到事实，**再**把失败原因盖上去。
+   *
+   * 反过来写（先 showAlert 再 refresh）会让这条消息立刻消失 ——
+   * 因为切换失败刻意不写入 lastError（不能顶掉尚未确认的泄漏告警），
+   * 于是 refresh 拿到的快照里 lastError 是 null，
+   * render() 内部的 showAlert(null) 正好把刚显示的错误擦掉。
+   * 症状是"错误闪一下就没了，点击像是没反应"。
+   * 此方第一版就是反的，被 tests/popup-nodes.test.ts 抓出来了。
+   */
+  await refresh()
+  showAlert(response.error)
 })
 
 el.settings?.addEventListener('click', () => {

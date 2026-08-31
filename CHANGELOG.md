@@ -27,6 +27,12 @@ Each version section below is extracted by `.github/workflows/release.yml` and b
   Group switchability is decided by the core, not pre-filtered client-side (ADR-29).
 - 组读取失败与代理告警是两个独立字段：一次「组名不存在」**不会**顶掉尚未确认的泄漏告警。
   Group failures never displace an unacknowledged leak warning.
+- 新增 Popup 的 DOM 测试：在 happy-dom 里加载**真实的** `index.html` 与 `style.css`，
+  把原本 15 项手工检查里的 13 项自动化掉，人工只剩「能不能真的切」与
+  「Clash Verge 里跟着变没有」两条。落地当场抓到一个真 bug ——
+  切换失败时错误提示会闪一下就被下一次渲染擦掉。
+  Adds DOM tests for the popup against the real HTML and CSS, replacing 13 of 15 manual checks.
+  They immediately caught a real bug: a failed switch flashed its error and lost it.
 
 ## v0.1.1
 
