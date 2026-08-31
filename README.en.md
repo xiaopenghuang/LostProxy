@@ -277,7 +277,46 @@ The three traps that cost the most time during development, all hit for real:
 - **V0.4** in-browser rule-based routing (PAC — ⚠️ must set `mandatory: true`. PAC is
   **fail-open** by default: if the script cannot be fetched or fails to evaluate, the browser
   falls back to a direct connection — exactly the opposite of V0.1's fail-closed semantics)
-- **V0.5** bundled core · **V0.6** subscription management
+- **V0.6** subscription management
+- ~~**V0.5** bundled core~~ — **dropped**, see below
+
+### Why the bundled core was dropped
+
+The original plan was a Native Messaging host that starts and stops `mihomo.exe`, so that
+installing the extension would be enough and no separate Clash client would be needed. Dropped
+after evaluation:
+
+**It serves an audience that barely exists.** Anyone configuring a proxy for their browser
+usually already has a Clash client installed. The feature saves opening that client — and the
+client has its own launch-at-login setting.
+
+**The costs, in contrast, are structural:**
+
+- **Port conflicts, with misdirected symptoms.** When two cores want the same port, the second one
+  fails to start. If LostProxy's starts first, the casualty is the user's existing client — and
+  they will not suspect this extension. Using separate ports avoids that, at the price of two
+  resident core processes (50–100 MB each), two node selections and two subscriptions.
+- **It breaks "uninstall leaves nothing".** Native Messaging requires a registry key under
+  `HKCU\Software\Microsoft\Edge\NativeMessagingHosts\`. It touches no proxy setting and needs no
+  elevation, but **the browser does not remove it on uninstall** — and the stated reason for
+  choosing `chrome.proxy` / `chrome.privacy` in `security.md §1` is precisely that the browser
+  restores them automatically, leaving no dirty state. V0.5 would turn this from a browser
+  extension into software installed on the system.
+- **Shipping the core raises both licensing and trust problems.** mihomo's release binaries are
+  built from the `Meta` branch, which is **GPL-3.0** (`main` is MIT — easy to misread), so mixing
+  it into this MIT project's distribution needs real care. More importantly: **this is a proxy
+  tool**, and users have no reason to trust an 18 MB binary this project dropped into a release
+  archive. Downloading from mihomo's official releases at runtime with a hash check would fix the
+  trust problem, but by then the remaining benefit — saving one download — is smaller than the
+  total cost.
+
+**Conclusion**: V0.5 buys convenience and spends the "uninstall leaves nothing" property. The
+current shape — user supplies the core, this extension only governs scope — has clearer
+responsibilities and a smaller footprint.
+
+If the barrier to entry does need lowering later, **port auto-detection** is far cheaper: probe
+the common ports and fill in whichever answers. It needs no native program and crosses none of
+the boundaries above.
 
 ## License
 
