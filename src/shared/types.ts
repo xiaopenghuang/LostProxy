@@ -38,6 +38,17 @@ export interface Settings {
   webRtcLockEnabled: boolean
   /** 界面语言偏好。'auto' 表示跟随浏览器。 */
   language: Language
+  /**
+   * 主策略组名称（V0.2）。空字符串表示用户还没选。
+   *
+   * 技术方案 §16 明令「禁止硬编码某个代理组名称」——不同机场的组名各不相同，
+   * 猜一个默认值（"Proxy"、"🚀 节点选择"…）只会在猜错时表现为「功能坏了」。
+   * 所以默认为空，由用户在 Settings 里从内核实际返回的组里选。
+   *
+   * ⚠️ 这是**完全由用户数据决定**的字符串，含空格 / `|` / `/` / emoji 都属正常，
+   *    拼进 URL 前必须 encodeURIComponent（architecture.md ADR-30）。
+   */
+  primaryGroup: string
 }
 
 /**
@@ -84,6 +95,17 @@ export type ErrorCode =
   | 'PROXY_LEAK_SUSPECTED'
   /** 用户输入的设置不合法 */
   | 'INVALID_SETTINGS'
+  /** V0.2：用户配置的主策略组在内核里不存在（改了订阅、组名变了） */
+  | 'GROUP_NOT_FOUND'
+  /**
+   * V0.2：内核拒绝手动切换该组（`400 Must be a Selector`）。
+   * 判定权在内核而不在我们，见 architecture.md ADR-29。
+   */
+  | 'GROUP_NOT_SELECTABLE'
+  /** V0.2：切换请求失败，且不属于上面任何一类 */
+  | 'SELECT_FAILED'
+  /** V0.2：还没选主策略组 —— 这不是错误，是「需要配置」 */
+  | 'GROUP_NOT_CONFIGURED'
   | 'UNKNOWN'
 
 /**
@@ -140,6 +162,14 @@ export interface SettingsView {
   webRtcLockEnabled: boolean
   /** 语言偏好。UI 需要它来渲染下拉框的当前选中项。 */
   language: Language
+  /**
+   * 主策略组名称。**不是敏感信息**，UI 需要它来渲染当前选中的组。
+   *
+   * 这个字段是显式声明制度的一次实际检验：加它的时候必须回答
+   * 「这个要不要给 UI」。答案是要（UI 得显示用户选了哪个组），
+   * 但这个决定是**做出来的**，不是被 `Omit` 自动带过来的。
+   */
+  primaryGroup: string
 }
 
 /**
@@ -186,6 +216,24 @@ export interface StatusSnapshot {
   /** WebRTC 是否处于加锁状态。 */
   webRtcLocked: boolean
   lastError: NormalizedError | null
+  /**
+   * 主策略组快照（V0.2）。null 表示读不到，具体原因见 `groupError`。
+   *
+   * `coreStatus !== 'online'` 时必然为 null —— 切节点依赖 Controller，
+   * 而 Controller 不可达在本项目里**不是错误**（ADR-23，named pipe 模式很常见）。
+   * 因此这种情况下 UI 应显示「需要开启外部控制」而非报错。
+   */
+  group: GroupView | null
+  /**
+   * 读取策略组时的问题。
+   *
+   * 🔴 刻意与 `lastError` 分开两个字段，而不是复用后者。
+   *    `lastError` 承载的是代理层告警，其中 `PROXY_LEAK_SUSPECTED` 必须由用户
+   *    显式确认才消失（ADR-22）。若把「组名不存在」也写进 lastError，
+   *    一次组读取失败就会**顶掉一条尚未确认的泄漏告警** ——
+   *    用不重要的信息覆盖掉最重要的信息，是此方最不想造出的那种 bug。
+   */
+  groupError: NormalizedError | null
 }
 
 /** Mihomo `GET /version` 的响应体。 */
@@ -193,6 +241,53 @@ export interface MihomoVersion {
   /** 是否为 Meta（mihomo）版本。 */
   meta: boolean
   version: string
+}
+
+/**
+ * 一个策略组（V0.2）。
+ *
+ * 只取本项目用得到的字段。Mihomo 的组对象还带 `history`、`extra`、`testUrl`、
+ * `icon`、`expectedStatus` 等，V0.2 一个都不用 —— 少读一个字段就少一处将来
+ * 因内核改动而失配的地方。延迟数据留给 V0.3。
+ */
+export interface ProxyGroup {
+  name: string
+  /**
+   * 组类型：`Selector` / `URLTest` / `Fallback` / `LoadBalance` 等。
+   *
+   * ⚠️ 刻意声明为 `string` 而不是联合字面量：内核可能新增类型，
+   *    而我们**不用**这个字段做能否切换的判定（ADR-29 把判定权交给内核），
+   *    它只用于展示与排序提示。收紧成联合类型只会在内核加新类型时炸编译。
+   */
+  type: string
+  /**
+   * 当前选中的节点名。
+   *
+   * `LoadBalance` 组**没有**这个字段（它按连接分摊，不存在"当前选中"），
+   * 所以类型是可空的，不是「理论上不会缺」。
+   */
+  now: string | null
+  /** 组内所有成员名（可能是节点，也可能是嵌套的组）。 */
+  all: readonly string[]
+}
+
+/** `GET /group` 的归一化结果。 */
+export type GroupsResult =
+  | { readonly ok: true; readonly groups: readonly ProxyGroup[] }
+  | { readonly ok: false; readonly error: NormalizedError }
+
+/**
+ * 主策略组的当前状态快照，供 Popup 渲染节点列表。
+ *
+ * 与 `ProxyGroup` 分开，因为 Popup 需要的是「已解析好、可直接渲染」的形态：
+ * 组不存在 / 未配置 / 内核不可达都是**正常分支**而非异常，
+ * 用 `null` + `StatusSnapshot.groupError` 表达，不抛。
+ */
+export interface GroupView {
+  name: string
+  type: string
+  now: string | null
+  nodes: readonly string[]
 }
 
 /**

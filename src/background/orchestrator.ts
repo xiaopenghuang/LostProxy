@@ -16,8 +16,15 @@
 import { ALERT_STALE_AFTER_MS } from '../shared/constants'
 import { errors, isSelfHealing } from '../shared/errors'
 import type { Request, Response, ResponsePayloads } from '../shared/messages'
-import type { CoreStatus, NormalizedError, Settings, StatusSnapshot } from '../shared/types'
-import { getVersion, type ProbeResult } from './mihomo'
+import type {
+  CoreStatus,
+  GroupView,
+  NormalizedError,
+  ProxyGroup,
+  Settings,
+  StatusSnapshot,
+} from '../shared/types'
+import { getGroups, getVersion, selectNode, type ProbeResult } from './mihomo'
 import { inspectWebRtcPolicy, syncWebRtcLock } from './privacy'
 import { disableProxy, enableProxy, inspectProxy, isBlockedByControl, type ProxyInspection } from './proxy'
 import {
@@ -119,19 +126,50 @@ export function pickError(
   return null
 }
 
+/**
+ * 从全部组里找出用户选定的那个，投影成 UI 可直接渲染的形态（V0.2）。
+ *
+ * 三种「读不到」都是**正常分支**而非异常：没选组、组不存在、内核不可达。
+ * 因此返回 `[null, error]` 而不是抛 —— 抛异常会诱使调用方
+ * 用 try/catch 包住整个状态采集，一次组读取失败就毁掉整个快照。
+ */
+function resolveGroup(
+  settings: Settings,
+  groups: readonly ProxyGroup[],
+): readonly [GroupView | null, NormalizedError | null] {
+  if (settings.primaryGroup.length === 0) return [null, errors.groupNotConfigured()]
+
+  // 逐字节相等匹配。刻意不做大小写无关或 trim 后的模糊匹配：
+  // 组名要发回内核，模糊匹配到的名字未必是内核认的那个。
+  const found = groups.find((g) => g.name === settings.primaryGroup)
+  if (found === undefined) return [null, errors.groupNotFound(settings.primaryGroup)]
+
+  return [{ name: found.name, type: found.type, now: found.now, nodes: found.all }, null]
+}
+
 /** 采集完整运行时快照。只读，无副作用。 */
 export async function collectStatus(): Promise<StatusSnapshot> {
   const settings = await getSettings()
   const enabled = await getEnabledState()
 
-  // 四项探测互不依赖，并发跑省掉串行等待
+  // 五项探测互不依赖，并发跑省掉串行等待
   // （探活最坏要等 3 秒超时，串起来会让 Popup 明显卡顿）。
-  const [inspection, probe, webRtc, persisted] = await Promise.all([
+  const [inspection, probe, webRtc, persisted, groupsResult] = await Promise.all([
     inspectProxy(settings),
     getVersion(settings),
     inspectWebRtcPolicy(),
     getLastError(),
+    getGroups(settings),
   ])
+
+  /*
+   * 组读取失败不进 pickError，只进 groupError（types.ts 有详述）。
+   * 若混进 lastError，一次「组名不存在」就会顶掉一条尚未确认的
+   * PROXY_LEAK_SUSPECTED —— 用不重要的信息盖掉最重要的信息。
+   */
+  const [group, groupError] = groupsResult.ok
+    ? resolveGroup(settings, groupsResult.groups)
+    : ([null, groupsResult.error] as const)
 
   return {
     enabled,
@@ -143,6 +181,8 @@ export async function collectStatus(): Promise<StatusSnapshot> {
     proxyActuallySet: inspection.matchesExpected,
     webRtcLocked: webRtc.locked,
     lastError: pickError(persisted, enabled, inspection, probe),
+    group,
+    groupError,
   }
 }
 
@@ -289,6 +329,45 @@ export async function handleSaveSettings(
   return { ok: true, data: toSettingsView(result.value) }
 }
 
+/** V0.2：拉取全部策略组，供 Settings 页选主策略组。 */
+export async function handleListGroups(): Promise<Response<ResponsePayloads['LIST_GROUPS']>> {
+  const settings = await getSettings()
+  const result = await getGroups(settings)
+
+  return result.ok ? { ok: true, data: { groups: result.groups } } : { ok: false, error: result.error }
+}
+
+/**
+ * V0.2：切换主策略组的选中节点。
+ *
+ * ⚠️ 这个操作改动的是**内核的全局状态**，效果不限于本浏览器（ADR-28）。
+ *
+ * 刻意**不**校验 node 是否在组的成员列表里：列表本身就是内核给的，
+ * 而两次请求之间订阅可能已经更新。真正的权威判定在内核那边 ——
+ * 它对不认识的成员名回 400，我们照实报错（ADR-29 的同一条思路）。
+ */
+export async function handleSelectNode(node: string): Promise<Response<StatusSnapshot>> {
+  const settings = await getSettings()
+
+  if (settings.primaryGroup.length === 0) {
+    return { ok: false, error: errors.groupNotConfigured() }
+  }
+
+  const applied = await selectNode(settings, settings.primaryGroup, node)
+  if (!applied.ok) {
+    /*
+     * 🔴 刻意**不** setLastError。
+     *   切节点失败是一次操作的失败，不是代理层的安全事件。写进 lastError
+     *   会让它挤进 pickError 的最高优先级，从而盖住真正的代理告警 ——
+     *   而 lastError 里那条可能是尚未确认的泄漏警告。
+     *   失败信息通过响应信封直接回给发起这次点击的 UI 就够了。
+     */
+    return { ok: false, error: applied.error }
+  }
+
+  return { ok: true, data: await collectStatus() }
+}
+
 /** 单次探活，不改动任何设置。用于 Settings 页的 [Test Mihomo]。 */
 export async function handleTestCore(): Promise<Response<ResponsePayloads['TEST_CORE']>> {
   const settings = await getSettings()
@@ -321,6 +400,10 @@ export async function handleMessage(message: unknown): Promise<Response<unknown>
         return await handleDismissError()
       case 'SAVE_SETTINGS':
         return await handleSaveSettings(request.patch)
+      case 'LIST_GROUPS':
+        return await handleListGroups()
+      case 'SELECT_NODE':
+        return await handleSelectNode(request.node)
       default: {
         // 穷举检查：新增消息类型时忘了处理，这里会编译失败。
         const exhaustive: never = request

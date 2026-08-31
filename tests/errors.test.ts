@@ -31,6 +31,21 @@ const EXPECTED_SELF_HEALING: Record<ErrorCode, boolean> = {
   PROXY_RUNTIME_ERROR: true,
   PROXY_LEAK_SUSPECTED: false,
   INVALID_SETTINGS: false,
+  /*
+   * V0.2 的四个组相关码全部 false。
+   *
+   * 它们压根不走自愈这条路：组错误进的是 `StatusSnapshot.groupError`，
+   * 切换失败只通过响应信封回给发起点击的 UI，两者都不写入 `lastError`。
+   * 而自愈只作用于 `lastError`。
+   *
+   * 既然如此为什么还要在这里表态？因为「现在不走那条路」是当前实现的性质，
+   * 不是类型系统保证的事实。将来有人把组错误写进 lastError 时，
+   * 这一格的值就会立即生效 —— 那时 false（不自愈、告警留着）是安全方向。
+   */
+  GROUP_NOT_CONFIGURED: false,
+  GROUP_NOT_FOUND: false,
+  GROUP_NOT_SELECTABLE: false,
+  SELECT_FAILED: false,
   UNKNOWN: false,
 }
 

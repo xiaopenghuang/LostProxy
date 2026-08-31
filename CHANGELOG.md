@@ -8,6 +8,26 @@ Each version section below is extracted by `.github/workflows/release.yml` and b
 
 ---
 
+## Unreleased — V0.2 节点切换
+
+⚠️ 尚未真机验收，**故意不打 tag**。验收清单见 `docs/test-plan.md` §5.5 / §5.6。
+
+- 在 Popup 里直接查看和切换 Mihomo 策略组的节点，不用打开 Clash Verge。
+  View and switch the nodes of a Mihomo policy group directly in the popup.
+- Settings 新增「主策略组」，列表从内核实际返回的组里选。**不猜组名** ——
+  不同机场组名各异，猜错会表现为「功能是坏的」（技术方案 §16 禁止硬编码）。
+  Settings gains a primary proxy group picker, populated from the core. Group names are never
+  guessed: they differ between providers and a wrong guess looks like a broken feature.
+- 🔴 **作用域披露**：切换节点改的是**内核的全局状态**，所有在用这个内核的程序都会跟着变 ——
+  与只影响本浏览器的代理开关不同。Popup 里对此有明示，理由见 `architecture.md` ADR-28。
+  **Scope disclosure**: switching a node changes the core itself, so anything else using that core
+  is affected too — unlike the proxy toggle, which only affects this browser. The popup says so.
+- 不预先过滤策略组类型，能否手动切换由内核判定（ADR-29）：URLTest / Fallback 这类组
+  在新内核上可能可切，客户端复刻判定规则必然过时，且过滤失败是无声的。
+  Group switchability is decided by the core, not pre-filtered client-side (ADR-29).
+- 组读取失败与代理告警是两个独立字段：一次「组名不存在」**不会**顶掉尚未确认的泄漏告警。
+  Group failures never displace an unacknowledged leak warning.
+
 ## v0.1.1
 
 **扩展代码与 v0.1.0 完全相同（`src/` 逐字节一致）。已经装了 v0.1.0 的话不需要重装。**

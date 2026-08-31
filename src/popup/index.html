@@ -86,6 +86,28 @@
         <p class="core-note" id="core-note" data-i18n="popup.coreNote" hidden></p>
       </section>
 
+      <!--
+        V0.2 节点切换。
+
+        ⚠️ scope-notice 是 ADR-28 要求的边界披露，**不得删除**：
+           切节点改的是内核的全局状态，效果不限于本浏览器。这是本项目
+           第一个逸出浏览器边界的功能，而"只影响这一个浏览器"是整个
+           项目的立项理由，所以必须在用户点击的地方就说清楚。
+      -->
+      <section class="nodes" id="nodes" hidden>
+        <div class="nodes-head">
+          <span class="nodes-label" data-i18n="popup.nodeSectionLabel"></span>
+          <span class="nodes-group" id="nodes-group"></span>
+        </div>
+
+        <!-- 需要配置 / 需要开外部控制时显示，替代节点列表 -->
+        <p class="nodes-hint" id="nodes-hint" hidden></p>
+
+        <ul class="node-list" id="node-list"></ul>
+
+        <p class="nodes-scope" id="nodes-scope" data-i18n="popup.nodeScopeNotice" hidden></p>
+      </section>
+
       <dl class="facts">
         <dt data-i18n="popup.modeLabel"></dt>
         <dd id="mode-text">—</dd>

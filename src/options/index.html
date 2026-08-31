@@ -85,6 +85,29 @@
           </div>
         </section>
 
+        <!--
+          V0.2 主策略组。放在 Controller 之后，因为读取策略组依赖
+          Controller 的地址、端口与密钥已经填好并保存。
+        -->
+        <section class="card">
+          <h2 data-i18n="options.groupSectionTitle"></h2>
+          <p class="hint" data-i18n="options.groupSectionHint"></p>
+          <div class="field">
+            <label for="primary-group" data-i18n="options.primaryGroupLabel"></label>
+            <select id="primary-group" class="control"></select>
+          </div>
+          <div class="card-actions">
+            <button
+              type="button"
+              id="load-groups"
+              class="btn"
+              data-i18n="options.groupLoadButton"
+            ></button>
+            <span class="result" id="groups-result"></span>
+          </div>
+          <p class="hint hint--tight" id="group-type-note"></p>
+        </section>
+
         <section class="card">
           <h2 data-i18n="options.groupLeak"></h2>
           <label class="check">

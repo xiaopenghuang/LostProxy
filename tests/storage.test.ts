@@ -310,6 +310,7 @@ describe('toSettingsView', () => {
       controllerSecret: SECRET,
       webRtcLockEnabled: false,
       language: 'zh',
+      primaryGroup: '🇭🇰 香港 | 专线',
     })
 
     expect(view).toEqual({
@@ -320,6 +321,9 @@ describe('toSettingsView', () => {
       hasSecret: true,
       webRtcLockEnabled: false,
       language: 'zh',
+      // 组名原样透传：含空格 / `|` / emoji 都不得被改写，
+      // 否则发回内核时匹配不上（ADR-30）。
+      primaryGroup: '🇭🇰 香港 | 专线',
     })
   })
 })

@@ -43,16 +43,38 @@ import { proxySetting, webRtcSetting } from './setup'
 
 const SECRET = 'sk-orchestrator-secret-must-not-escape'
 
-/** 默认让探活成功；个别用例再覆盖。 */
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+/** 记录 fetch 调用，供断言「有没有发出请求」「发到哪个端点」。 */
+let fetchedUrls: string[] = []
+
+/**
+ * 默认让探活成功；个别用例再覆盖。
+ *
+ * ⚠️ 刻意**按 URL 分派**而不是对所有请求返回同一个响应体。
+ *   collectStatus 会同时打 `/version` 与 `/group`，一个不分 URL 的桩
+ *   会把版本号对象喂给策略组解析器 —— 于是「Core 在线」的测试环境里
+ *   组永远是 CORE_BAD_RESPONSE。那样的桩不像真内核，
+ *   它会让真 bug 通过测试。
+ */
+function stubCore(groups: readonly unknown[] = []): void {
+  vi.stubGlobal('fetch', (input: string | URL | Request) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    fetchedUrls.push(url)
+    if (url.endsWith('/version')) return Promise.resolve(json({ meta: true, version: 'v1.19.0' }))
+    if (url.endsWith('/group')) return Promise.resolve(json({ proxies: groups }))
+    // PUT /proxies/{name}
+    return Promise.resolve(new Response(null, { status: 204 }))
+  })
+}
+
 function stubCoreOnline(): void {
-  vi.stubGlobal('fetch', () =>
-    Promise.resolve(
-      new Response(JSON.stringify({ meta: true, version: 'v1.19.0' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    ),
-  )
+  stubCore()
 }
 
 function stubCoreOffline(): void {
@@ -77,6 +99,7 @@ function inspection(
 }
 
 beforeEach(() => {
+  fetchedUrls = []
   stubCoreOnline()
 })
 
@@ -680,5 +703,212 @@ describe('defaults', () => {
     expect(snapshot.settings.controllerPort).toBe(DEFAULT_SETTINGS.controllerPort)
     expect(snapshot.settings.hasSecret).toBe(false)
     expect(snapshot.settings.webRtcLockEnabled).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// V0.2 节点切换
+// ---------------------------------------------------------------------------
+
+const GROUP = '🇭🇰 香港 | 专线'
+
+const selectorGroup = { name: GROUP, type: 'Selector', now: 'HK-01', all: ['HK-01', 'HK-02'] }
+
+async function withGroupConfigured(): Promise<void> {
+  await saveSettings({ primaryGroup: GROUP })
+}
+
+describe('collectStatus · 策略组', () => {
+  it('resolves the configured group into a renderable view', async () => {
+    stubCore([selectorGroup])
+    await withGroupConfigured()
+
+    const snapshot = await collectStatus()
+
+    expect(snapshot.groupError).toBeNull()
+    expect(snapshot.group).toEqual({
+      name: GROUP,
+      type: 'Selector',
+      now: 'HK-01',
+      nodes: ['HK-01', 'HK-02'],
+    })
+  })
+
+  it('reports GROUP_NOT_CONFIGURED before the user has picked one', async () => {
+    // 默认值必须为空（§16 禁止硬编码组名），所以每个新用户都会经过这个状态。
+    stubCore([selectorGroup])
+
+    const snapshot = await collectStatus()
+
+    expect(snapshot.group).toBeNull()
+    expect(snapshot.groupError?.code).toBe('GROUP_NOT_CONFIGURED')
+  })
+
+  it('reports GROUP_NOT_FOUND when the subscription no longer has that group', async () => {
+    stubCore([{ name: 'Something Else', type: 'Selector', now: 'A', all: ['A'] }])
+    await withGroupConfigured()
+
+    const snapshot = await collectStatus()
+
+    expect(snapshot.group).toBeNull()
+    expect(snapshot.groupError?.code).toBe('GROUP_NOT_FOUND')
+  })
+
+  /*
+   * 组名要发回内核，模糊匹配到的名字未必是内核认的那个。
+   *
+   * ⚠️ 用拉丁字母做大小写用例：`'香港'.toUpperCase()` 是恒等变换，
+   *    拿 CJK 测大小写敏感会得到一条"通过了但什么都没验"的测试
+   *    （此方第一版就是这么写的，它确实通过了 —— 因为字符串根本没变）。
+   */
+  it.each([
+    ['different case', 'proxy', 'Proxy'],
+    ['a trailing space', 'Proxy ', 'Proxy'],
+    ['a leading space', ' Proxy', 'Proxy'],
+  ])('does not match a group name differing only by %s', async (_label, configured, actual) => {
+    stubCore([{ ...selectorGroup, name: actual }])
+    await saveSettings({ primaryGroup: configured })
+
+    expect((await collectStatus()).groupError?.code).toBe('GROUP_NOT_FOUND')
+  })
+
+  it('surfaces an unreachable controller as CORE_OFFLINE in groupError', async () => {
+    stubCoreOffline()
+    await withGroupConfigured()
+
+    const snapshot = await collectStatus()
+
+    expect(snapshot.group).toBeNull()
+    expect(snapshot.groupError?.code).toBe('CORE_OFFLINE')
+  })
+
+  /*
+   * 🔴 本轮最重要的一条不变量。
+   *
+   * groupError 与 lastError 是两个独立字段。若把组错误也写进 lastError，
+   * 一次「组名不存在」就会顶掉一条尚未确认的 PROXY_LEAK_SUSPECTED ——
+   * 用最不重要的信息盖掉最重要的信息。
+   */
+  it('🔴 never lets a group failure displace an unacknowledged leak warning', async () => {
+    stubCore([]) // 组一个都没有 → 必然 GROUP_NOT_FOUND
+    await withGroupConfigured()
+    const leak = errors.proxyLeakSuspected()
+    await setLastError(leak)
+
+    const snapshot = await collectStatus()
+
+    expect(snapshot.groupError?.code).toBe('GROUP_NOT_FOUND')
+    // 泄漏告警必须原样留着
+    expect(snapshot.lastError?.code).toBe('PROXY_LEAK_SUSPECTED')
+  })
+
+  it('🔴 keeps a group failure out of persisted storage entirely', async () => {
+    // 组错误是瞬时的读取结果，不该跨 Service Worker 重启存活。
+    stubCore([])
+    await withGroupConfigured()
+
+    await collectStatus()
+
+    expect(await getLastError()).toBeNull()
+  })
+})
+
+describe('handleSelectNode', () => {
+  it('switches the node and returns a fresh snapshot', async () => {
+    stubCore([selectorGroup])
+    await withGroupConfigured()
+
+    const result = await handleMessage({ type: 'SELECT_NODE', node: 'HK-02' })
+
+    expect(result.ok).toBe(true)
+    // PUT 打到了编码后的组路径上
+    expect(fetchedUrls.some((u) => u.includes(`/proxies/${encodeURIComponent(GROUP)}`))).toBe(true)
+  })
+
+  it('refuses when no group is configured, without touching the core', async () => {
+    stubCore([selectorGroup])
+
+    const result = await handleMessage({ type: 'SELECT_NODE', node: 'HK-02' })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('GROUP_NOT_CONFIGURED')
+    // 没配组就不该发出任何 PUT —— 我们连要改哪个组都不知道。
+    expect(fetchedUrls.some((u) => u.includes('/proxies/'))).toBe(false)
+  })
+
+  it('🔴 does not persist a switch failure into lastError', async () => {
+    /*
+     * 切节点失败是一次操作的失败，不是代理层的安全事件。
+     * 写进 lastError 会让它挤进 pickError 的最高优先级，
+     * 盖住真正的代理告警 —— 而那条可能是尚未确认的泄漏警告。
+     */
+    await withGroupConfigured()
+    const leak = errors.proxyLeakSuspected()
+    await setLastError(leak)
+    // 让 PUT 失败：内核拒绝手动切换
+    vi.stubGlobal('fetch', (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.endsWith('/version')) return Promise.resolve(json({ meta: true, version: 'v1' }))
+      if (url.endsWith('/group')) return Promise.resolve(json({ proxies: [selectorGroup] }))
+      return Promise.resolve(json({ message: 'Must be a Selector' }, 400))
+    })
+
+    const result = await handleMessage({ type: 'SELECT_NODE', node: 'HK-02' })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('GROUP_NOT_SELECTABLE')
+    // 泄漏告警没有被这次失败覆盖
+    expect((await getLastError())?.code).toBe('PROXY_LEAK_SUSPECTED')
+  })
+
+  it('does not require the proxy toggle to be ON', async () => {
+    /*
+     * 切节点走 Controller，与代理开关无关。要求先开代理是没有依据的限制 ——
+     * 用户完全可能想先选好节点再开代理。
+     */
+    stubCore([selectorGroup])
+    await withGroupConfigured()
+    await setEnabledState(false)
+
+    expect((await handleMessage({ type: 'SELECT_NODE', node: 'HK-02' })).ok).toBe(true)
+  })
+})
+
+describe('handleListGroups', () => {
+  it('returns every group, including ones the core will not switch', async () => {
+    /*
+     * ADR-29：不预先过滤组类型。过滤掉 URLTest 的代价是在新内核上
+     * 藏掉本来能用的功能，而且这种失败完全无声。
+     */
+    stubCore([selectorGroup, { name: 'Auto', type: 'URLTest', now: 'A', all: ['A', 'B'] }])
+
+    const result = await handleMessage({ type: 'LIST_GROUPS' })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const data = result.data as { groups: readonly { name: string; type: string }[] }
+    expect(data.groups.map((g) => g.type)).toEqual(['Selector', 'URLTest'])
+  })
+
+  it('propagates a controller failure instead of returning an empty list', async () => {
+    // 空列表会被 UI 渲染成「你没有任何策略组」，那是错误的结论。
+    stubCoreOffline()
+
+    const result = await handleMessage({ type: 'LIST_GROUPS' })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('CORE_OFFLINE')
+  })
+
+  it('never exposes the secret in the response', async () => {
+    await saveSettings({ controllerSecret: SECRET })
+    stubCore([selectorGroup])
+
+    const result = await handleMessage({ type: 'LIST_GROUPS' })
+
+    expect(JSON.stringify(result)).not.toContain(SECRET)
   })
 })

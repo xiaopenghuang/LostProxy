@@ -266,9 +266,13 @@ The three traps that cost the most time during development, all hit for real:
 
 ## Roadmap
 
-V0.1 is substantially complete. Later versions follow in order:
+- **V0.2 node switching** — code complete, **pending real-machine acceptance** (unreleased).
+  Switch the node of a Mihomo policy group straight from the popup, without opening Clash Verge.
 
-- **V0.2** node switching (change the Mihomo policy group from the extension)
+  ⚠️ This is the project's **first feature whose effect leaves the browser**: switching a node
+  changes the core's global state, so anything else using that core is affected too — unlike the
+  proxy toggle, which only affects this browser. The popup says so. The core's *selection* is
+  global; the core's *use* is still confined to this browser.
 - **V0.3** latency testing
 - **V0.4** in-browser rule-based routing (PAC — ⚠️ must set `mandatory: true`. PAC is
   **fail-open** by default: if the script cannot be fetched or fails to evaluate, the browser

@@ -11,7 +11,13 @@
  * 加一种消息时忘了处理，tsc 会直接报错。
  */
 
-import type { Settings, SettingsView, StatusSnapshot, NormalizedError } from './types'
+import type {
+  NormalizedError,
+  ProxyGroup,
+  Settings,
+  SettingsView,
+  StatusSnapshot,
+} from './types'
 
 /** 从 UI 发往 Service Worker 的请求。 */
 export type Request =
@@ -38,6 +44,22 @@ export type Request =
   | { readonly type: 'DISMISS_ERROR' }
   /** 保存设置。部分字段更新，未提供的字段保持原值。 */
   | { readonly type: 'SAVE_SETTINGS'; readonly patch: Partial<Settings> }
+  /**
+   * V0.2：拉取全部策略组，供 Settings 页选主策略组。
+   *
+   * 与 GET_STATUS 里顺带返回的 `group` 分开：那个只返回**已选中的那一个**组，
+   * 而这里要的是**全部**组的列表。让 GET_STATUS 每次都拉全量会给每次开 Popup
+   * 都加一次不必要的请求，而选组是一次性动作。
+   */
+  | { readonly type: 'LIST_GROUPS' }
+  /**
+   * V0.2：切换主策略组的选中节点。
+   *
+   * ⚠️ 这个操作会改动**内核的全局状态**，效果不限于本浏览器
+   *    （architecture.md ADR-28）。它是本项目第一个逸出浏览器边界的操作，
+   *    UI 必须对此有明示。
+   */
+  | { readonly type: 'SELECT_NODE'; readonly node: string }
 
 /** 消息类型字面量，便于运行时穷举校验。 */
 export type RequestType = Request['type']
@@ -61,6 +83,9 @@ export interface ResponsePayloads {
   DISMISS_ERROR: StatusSnapshot
   /** 返回视图而非 Settings —— 响应里同样不带 secret 明文。 */
   SAVE_SETTINGS: SettingsView
+  LIST_GROUPS: { groups: readonly ProxyGroup[] }
+  /** 切换后返回新快照，UI 直接用它重绘，不必再发一次 GET_STATUS。 */
+  SELECT_NODE: StatusSnapshot
 }
 
 /** 给定请求类型，推导出其响应类型。 */

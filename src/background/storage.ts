@@ -85,6 +85,14 @@ export function coerceSettings(raw: unknown): Settings {
         ? input.webRtcLockEnabled
         : DEFAULT_SETTINGS.webRtcLockEnabled,
     language: isValidLanguage(input.language) ? input.language : DEFAULT_SETTINGS.language,
+    /*
+     * 组名不 trim，理由同 secret：它必须与内核返回的字符串**逐字节相等**才能
+     * 命中正确的组。机场用的组名确实可能带前后空格或不可见字符，
+     * 我们擅自 trim 就会造出一个永远匹配不上的名字，且症状是「组不存在」——
+     * 用户完全无从推断是我们改了他的输入。
+     */
+    primaryGroup:
+      typeof input.primaryGroup === 'string' ? input.primaryGroup : DEFAULT_SETTINGS.primaryGroup,
   }
 }
 
@@ -124,6 +132,19 @@ export function validateSettings(patch: Partial<Settings>, base: Settings): Vali
   }
   if (patch.language !== undefined && !isValidLanguage(patch.language)) {
     add('validation.language')
+  }
+
+  /*
+   * 只校验类型，不校验「这个组是否存在」。
+   *
+   * 存在性必须由内核判定，而校验发生在 background 且必须是同步的 ——
+   * 为了校验一个字符串去发一次网络请求，会让保存设置这件事依赖 Controller
+   * 是否在线。而 Controller 不可达在本项目里是正常状态（ADR-23），
+   * 那样一来 named pipe 模式的用户连保存设置都做不到。
+   * 组不存在的情况在读取时报 GROUP_NOT_FOUND，那是它该出现的位置。
+   */
+  if (patch.primaryGroup !== undefined && typeof patch.primaryGroup !== 'string') {
+    add('validation.primaryGroup')
   }
 
   if (issues.length > 0) {
@@ -235,5 +256,7 @@ export function toSettingsView(settings: Settings): SettingsView {
     hasSecret: settings.controllerSecret.length > 0,
     webRtcLockEnabled: settings.webRtcLockEnabled,
     language: settings.language,
+    // 非敏感，UI 需要它显示当前选中的组（决定 exposed 的过程见 types.ts）。
+    primaryGroup: settings.primaryGroup,
   }
 }

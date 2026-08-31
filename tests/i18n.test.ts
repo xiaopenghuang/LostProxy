@@ -135,3 +135,22 @@ describe('languageLabel', () => {
     expect(LANGUAGE_OPTIONS).toEqual(['auto', 'zh', 'en'])
   })
 })
+
+describe('🔴 ADR-28 边界披露的文案内容', () => {
+  /*
+   * 光有一个 i18n key 不够 —— 内容被改成一句空泛的「可能有影响」也算有 key。
+   * 这条测试要求两种语言都真的点明「其他程序 / anything else」，
+   * 因为用户要能据此判断自己是否受影响，而含糊的警告只会被无视。
+   */
+  it('names the actual consequence in both languages', () => {
+    expect(translate('en', 'popup.nodeScopeNotice')).toMatch(/anything else using this core/i)
+    expect(translate('zh', 'popup.nodeScopeNotice')).toContain('在用这个内核的程序')
+  })
+
+  it('contrasts against the browser-only proxy toggle', () => {
+    // 关键在于对比：说清「这个操作」与「上面那个开关」的作用域不同，
+    // 否则用户无法理解为什么同一个面板里两件事的范围不一样。
+    expect(translate('en', 'popup.nodeScopeNotice')).toMatch(/only affects this browser/i)
+    expect(translate('zh', 'popup.nodeScopeNotice')).toContain('只影响本浏览器')
+  })
+})

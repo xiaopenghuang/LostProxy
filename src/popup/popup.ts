@@ -32,6 +32,11 @@ const el = {
   modeText: document.querySelector<HTMLElement>('#mode-text'),
   webrtcText: document.querySelector<HTMLElement>('#webrtc-text'),
   settings: document.querySelector<HTMLButtonElement>('#open-settings'),
+  nodes: document.querySelector<HTMLElement>('#nodes'),
+  nodesGroup: document.querySelector<HTMLElement>('#nodes-group'),
+  nodesHint: document.querySelector<HTMLElement>('#nodes-hint'),
+  nodeList: document.querySelector<HTMLElement>('#node-list'),
+  nodesScope: document.querySelector<HTMLElement>('#nodes-scope'),
 }
 
 /** 当前翻译函数。首次 GET_STATUS 前用浏览器语言兜底，避免面板空白。 */
@@ -121,6 +126,77 @@ function renderCore(snapshot: StatusSnapshot): void {
   if (el.coreNote) el.coreNote.hidden = snapshot.coreStatus !== 'unreachable'
 }
 
+/**
+ * 渲染节点列表（V0.2）。
+ *
+ * 三种「没有列表可显示」的情况都不是错误，各给一句可操作的说明：
+ *   - Controller 不可达  → 去客户端里开外部控制（named pipe 模式很常见，ADR-23）
+ *   - 还没选主策略组      → 去 Settings 选一个（默认必须为空，§16 禁止硬编码组名）
+ *   - 组不存在           → 换了订阅，去 Settings 重新选
+ *
+ * ⚠️ 用 <button> 而不是可点击的 <li>：键盘可达性与语义都靠原生元素拿到，
+ *    自己用 div + tabindex + keydown 复刻一遍必然漏掉某些行为。
+ */
+function renderNodes(snapshot: StatusSnapshot): void {
+  const { nodes, nodesGroup, nodesHint, nodeList, nodesScope } = el
+  if (!nodes || !nodesGroup || !nodesHint || !nodeList || !nodesScope) return
+
+  nodes.hidden = false
+  nodeList.replaceChildren()
+
+  const showHint = (text: string): void => {
+    nodesHint.textContent = text
+    nodesHint.hidden = false
+    nodesGroup.textContent = ''
+    // 没有可点的东西时不显示边界说明 —— 那句话只在能切换时才有意义。
+    nodesScope.hidden = true
+  }
+
+  if (snapshot.group === null) {
+    const code = snapshot.groupError?.code
+    if (code === 'CORE_OFFLINE' || snapshot.coreStatus !== 'online') {
+      showHint(t('popup.nodeNeedsController'))
+    } else if (code === 'GROUP_NOT_CONFIGURED') {
+      showHint(t('popup.nodeNeedsGroup'))
+    } else if (snapshot.groupError) {
+      // 组不存在等：用错误自带的文案，它已经指明了下一步。
+      showHint(t(snapshot.groupError.key, snapshot.groupError.params))
+    } else {
+      showHint(t('popup.nodeNeedsGroup'))
+    }
+    return
+  }
+
+  nodesHint.hidden = true
+  nodesGroup.textContent = snapshot.group.name
+
+  if (snapshot.group.nodes.length === 0) {
+    showHint(t('popup.nodeEmpty'))
+    return
+  }
+
+  for (const name of snapshot.group.nodes) {
+    const item = document.createElement('li')
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'node-item'
+    // textContent 而非 innerHTML：节点名来自订阅，是不可信输入。
+    button.textContent = name
+    button.dataset.node = name
+    if (name === snapshot.group.now) {
+      button.setAttribute('aria-current', 'true')
+      // 当前节点点了也是同一个，禁用掉省一次无意义的往返。
+      button.disabled = true
+      button.title = t('popup.nodeCurrent')
+    }
+    item.append(button)
+    nodeList.append(item)
+  }
+
+  // ADR-28：能切换时必须显示边界说明。
+  nodesScope.hidden = false
+}
+
 function render(snapshot: StatusSnapshot): void {
   // 语言可能刚被用户改过，每次渲染都重建翻译器并刷新静态文案。
   t = createTranslator(resolveLocale(snapshot.settings.language))
@@ -142,6 +218,7 @@ function render(snapshot: StatusSnapshot): void {
   if (el.modeText) el.modeText.textContent = t(modeKey(snapshot))
   if (el.webrtcText) el.webrtcText.textContent = t(webRtcKey(snapshot))
 
+  renderNodes(snapshot)
   showAlert(snapshot.lastError)
 }
 
@@ -186,6 +263,33 @@ el.dismiss?.addEventListener('click', async () => {
     render(response.data)
   } else {
     showAlert(response.error)
+  }
+})
+
+/*
+ * 节点点击 —— 事件委托挂在列表上，而不是给每个按钮各挂一个监听器。
+ * 列表每次渲染都整体重建，逐个挂会随重绘次数累积。
+ */
+el.nodeList?.addEventListener('click', async (event) => {
+  const target = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('.node-item')
+  const node = target?.dataset.node
+  if (target === null || target === undefined || node === undefined) return
+
+  // 切换中把整个列表禁掉：连点两个节点会产生两个竞争的 PUT，
+  // 最后生效哪个取决于内核处理顺序，而 UI 会显示后返回的那个。
+  const buttons = [...(el.nodeList?.querySelectorAll<HTMLButtonElement>('.node-item') ?? [])]
+  const previouslyEnabled = buttons.filter((b) => !b.disabled)
+  for (const b of previouslyEnabled) b.disabled = true
+  target.textContent = t('popup.nodeSwitching')
+
+  const response = await sendMessage({ type: 'SELECT_NODE', node })
+
+  if (response.ok) {
+    render(response.data)
+  } else {
+    showAlert(response.error)
+    // 失败后拉一次真实状态：内核可能已经部分生效，UI 必须回到事实。
+    await refresh()
   }
 })
 

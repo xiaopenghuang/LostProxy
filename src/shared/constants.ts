@@ -23,6 +23,15 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   webRtcLockEnabled: true,
   // 'auto' = 跟随浏览器语言。首次安装时中文环境自动显示中文。
   language: 'auto',
+  /*
+   * 空字符串 = 用户还没选主策略组。
+   *
+   * 🔴 这里**必须**留空，不能猜一个常见组名。技术方案 §16 明令禁止硬编码
+   *    代理组名称：不同机场的组名从 "Proxy" 到 "🚀 节点选择" 到 "PROXY" 各式各样，
+   *    猜中了省用户一次点击，猜错了就表现为「这功能是坏的」——
+   *    而后者远比前者常见，且用户无从判断是自己配错还是插件有 bug。
+   */
+  primaryGroup: '',
 })
 
 /**

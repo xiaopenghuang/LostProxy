@@ -19,7 +19,7 @@
 import { createTranslator, languageLabel, LANGUAGE_OPTIONS, resolveLocale } from '../shared/i18n'
 import type { Language, Locale, MessageKey } from '../shared/i18n'
 import { sendMessage } from '../shared/messages'
-import type { Settings, SettingsView } from '../shared/types'
+import type { ProxyGroup, Settings, SettingsView } from '../shared/types'
 
 const el = {
   form: document.querySelector<HTMLFormElement>('#form'),
@@ -36,6 +36,10 @@ const el = {
   testResult: document.querySelector<HTMLElement>('#test-result'),
   save: document.querySelector<HTMLButtonElement>('#save'),
   saveResult: document.querySelector<HTMLElement>('#save-result'),
+  primaryGroup: document.querySelector<HTMLSelectElement>('#primary-group'),
+  loadGroups: document.querySelector<HTMLButtonElement>('#load-groups'),
+  groupsResult: document.querySelector<HTMLElement>('#groups-result'),
+  groupTypeNote: document.querySelector<HTMLElement>('#group-type-note'),
 }
 
 let locale: Locale = resolveLocale('auto')
@@ -43,6 +47,14 @@ let t = createTranslator(locale)
 
 /** 最近一次从 background 拿到的视图，用于检测未保存改动。 */
 let loaded: SettingsView | null = null
+
+/**
+ * 最近一次读到的策略组列表。
+ *
+ * 保留 type 是为了在用户选中某个组时提示「这类组不能手动切换」——
+ * 在他点保存、回到 Popup、点节点、报错之前就告诉他。
+ */
+let groups: readonly ProxyGroup[] = []
 
 function applyStaticText(): void {
   for (const node of document.querySelectorAll<HTMLElement>('[data-i18n]')) {
@@ -98,6 +110,66 @@ function renderSettings(view: SettingsView): void {
   if (el.secretHint) {
     el.secretHint.textContent = view.hasSecret ? t('options.secretSaved') : t('options.secretNone')
   }
+
+  renderGroupOptions(view.primaryGroup)
+}
+
+/**
+ * 渲染主策略组下拉框（V0.2）。
+ *
+ * 关键取舍：即便还没读过列表，也要把**已保存的组名**作为一个选项放进去。
+ * 否则打开 Settings 时下拉框是空的，用户会以为自己的配置丢了 ——
+ * 而实际上只是还没连内核。
+ */
+function renderGroupOptions(current: string): void {
+  const select = el.primaryGroup
+  if (!select) return
+
+  select.replaceChildren()
+
+  const none = document.createElement('option')
+  none.value = ''
+  none.textContent = t('options.groupNonePlaceholder')
+  select.append(none)
+
+  const names = groups.map((g) => g.name)
+  // 已保存的组不在最新列表里（换了订阅），仍然列出来，
+  // 免得保存时把用户原本的选择静默清成空。
+  if (current.length > 0 && !names.includes(current)) names.push(current)
+
+  for (const name of names) {
+    const option = document.createElement('option')
+    option.value = name
+    option.textContent = name
+    select.append(option)
+  }
+
+  select.value = current
+  renderGroupTypeNote()
+}
+
+/**
+ * 提示当前选中的组是什么类型、能不能手动切换。
+ *
+ * 在用户保存之前就说，而不是等他回 Popup 点了节点才报 400 ——
+ * 判定权归内核（ADR-29）不代表我们要让用户去撞那个错误。
+ */
+function renderGroupTypeNote(): void {
+  const note = el.groupTypeNote
+  if (!note) return
+
+  const selected = el.primaryGroup?.value ?? ''
+  const group = groups.find((g) => g.name === selected)
+
+  if (selected.length === 0 || group === undefined) {
+    note.textContent = ''
+    return
+  }
+
+  note.textContent =
+    group.type === 'Selector'
+      ? t('options.groupTypeSelector')
+      : t('options.groupTypeNote', { type: group.type })
 }
 
 /** 表单里的端口字符串 → number。非法输入交给 background 的校验去拒绝。 */
@@ -112,6 +184,8 @@ function collectPatch(): Partial<Settings> {
     controllerHost: el.controllerHost?.value.trim() ?? '',
     controllerPort: toPort(el.controllerPort?.value),
     webRtcLockEnabled: el.webrtcLock?.checked ?? true,
+    // 不 trim：组名必须与内核返回的字符串逐字节相等才能匹配（ADR-30）。
+    primaryGroup: el.primaryGroup?.value ?? '',
   }
 
   const typed = el.secret?.value ?? ''
@@ -207,6 +281,39 @@ el.testCore?.addEventListener('click', async () => {
   }
 
   if (el.testCore) el.testCore.disabled = false
+})
+
+el.loadGroups?.addEventListener('click', async () => {
+  /*
+   * 与 Test Mihomo 同一条纪律：读取用的是**已保存**的 Controller 配置，
+   * 不是表单里的当前值。改了端口没保存就点读取，会拿旧端口去连，
+   * 然后用户得到一个与他眼前看到的配置无关的错误。
+   */
+  if (hasUnsavedControllerChange()) {
+    setResult(el.groupsResult, t('options.groupNeedsController'), 'error')
+    return
+  }
+
+  if (el.loadGroups) el.loadGroups.disabled = true
+  setResult(el.groupsResult, t('options.groupLoading'), '')
+
+  const response = await sendMessage({ type: 'LIST_GROUPS' })
+
+  if (response.ok) {
+    groups = response.data.groups
+    // 保住用户当前的选择：重建下拉框不该把已选中的组重置掉。
+    renderGroupOptions(el.primaryGroup?.value ?? loaded?.primaryGroup ?? '')
+    setResult(el.groupsResult, t('options.groupLoadedCount', { count: groups.length }), 'ok')
+  } else {
+    setResult(el.groupsResult, t(response.error.key, response.error.params), 'error')
+  }
+
+  if (el.loadGroups) el.loadGroups.disabled = false
+})
+
+// 选中项变了就更新类型提示，不等保存。
+el.primaryGroup?.addEventListener('change', () => {
+  renderGroupTypeNote()
 })
 
 // 先用浏览器语言把静态文案填上，避免加载期间一片空白。

@@ -101,6 +101,40 @@ export const errors = {
   stateMismatch: (): NormalizedError => makeError('UNKNOWN', 'error.stateMismatch'),
 
   /**
+   * V0.2：还没选主策略组。
+   *
+   * 这**不是故障**，是「需要配置一次」。文案取向因此是指路而非报错 ——
+   * 默认值必须为空（§16 禁止硬编码组名），所以每个新用户都会经过这个状态，
+   * 用红色告警迎接他是错的。
+   */
+  groupNotConfigured: (): NormalizedError =>
+    makeError('GROUP_NOT_CONFIGURED', 'error.groupNotConfigured'),
+
+  /**
+   * V0.2：配置的组在内核里找不到。
+   *
+   * 最常见成因是换了订阅、机场改了组名 —— 用户侧完全无感，
+   * 所以文案必须点明「去 Settings 重新选一个组」，而不是只说"not found"。
+   * 带上组名，否则用户不知道我们在找哪个。
+   */
+  groupNotFound: (group: string): NormalizedError =>
+    makeError('GROUP_NOT_FOUND', 'error.groupNotFound', { group }),
+
+  /**
+   * V0.2：内核拒绝手动切换该组（400 Must be a Selector）。
+   *
+   * 判定来自内核而非我们的推断（ADR-29）。文案解释「这类组由内核自动选节点」，
+   * 因为用户看到"不支持"会以为是插件的缺陷，而实际上 URLTest / Fallback
+   * 本来就该自动选。
+   */
+  groupNotSelectable: (group: string): NormalizedError =>
+    makeError('GROUP_NOT_SELECTABLE', 'error.groupNotSelectable', { group }),
+
+  /** V0.2：切换失败，且不属于上面任何一类。 */
+  selectFailed: (node: string): NormalizedError =>
+    makeError('SELECT_FAILED', 'error.selectFailed', { node }),
+
+  /**
    * 设置校验失败。
    *
    * 只报**第一条**问题：NormalizedError 只能携带一个 key，

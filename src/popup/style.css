@@ -379,6 +379,126 @@ body {
   font-weight: 600;
 }
 
+/* ---------- V0.2 节点列表 ---------- */
+
+.nodes {
+  margin: 12px 0 0;
+  padding: 11px 13px 9px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-card);
+  background: var(--card);
+}
+
+.nodes-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.nodes-label {
+  color: var(--fg-secondary);
+}
+
+.nodes-group {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodes-hint {
+  margin: 0 0 4px;
+  color: var(--fg-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/* Popup 只有 312px 宽、高度也有限，而一个策略组可能有上百个节点。
+   给列表封顶并允许滚动，避免 Popup 被撑成一条长溜。 */
+.node-list {
+  display: flex;
+  max-height: 176px;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  gap: 2px;
+  overflow-y: auto;
+  list-style: none;
+  overscroll-behavior: contain;
+}
+
+.node-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 90ms ease;
+}
+
+.node-item:hover:not(:disabled) {
+  background: var(--card-hover);
+}
+
+.node-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 选中项用 accent 软底 + 左侧指示条。刻意不用纯色块填满：
+   Fluent 的选中态靠 accent 提示而非整块反色。 */
+.node-item[aria-current='true'] {
+  position: relative;
+  padding-left: 14px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.node-item[aria-current='true']::before {
+  position: absolute;
+  top: 50%;
+  left: 5px;
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--accent);
+  content: '';
+  transform: translateY(-50%);
+}
+
+.node-item:disabled {
+  color: var(--fg-tertiary);
+  cursor: default;
+}
+
+/*
+ * ADR-28 要求的边界披露。
+ *
+ * 刻意不做成"看起来像装饰的小灰字"：它上面有一条分隔线，且颜色用
+ * --fg-secondary 而不是 --fg-tertiary。这段话解释的是本项目唯一一个
+ * 效果逸出浏览器的操作，弱化它等于变相隐瞒。
+ */
+.nodes-scope {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--stroke);
+  color: var(--fg-secondary);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
 /* ---------- footer ---------- */
 
 .footer {

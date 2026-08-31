@@ -62,6 +62,26 @@ const EN = {
   'popup.systemProxy': 'System Proxy',
   'popup.tun': 'TUN',
 
+  // ---- V0.2 节点切换 ----
+  'popup.nodeSectionLabel': 'Node',
+  'popup.nodeLoading': 'Loading nodes…',
+  'popup.nodeSwitching': 'Switching…',
+  'popup.nodeCurrent': 'Current',
+  'popup.nodeGroupPrefix': 'Group',
+  'popup.nodeNeedsController':
+    'Node switching needs the Mihomo external controller. Enable it in your Mihomo client, then set the controller port in Settings.',
+  'popup.nodeNeedsGroup': 'Pick your primary proxy group in Settings to switch nodes here.',
+  'popup.nodeOpenSettings': 'Open Settings',
+  'popup.nodeEmpty': 'This group has no members.',
+  'popup.nodeRetry': 'Retry',
+  /*
+   * ADR-28 要求的边界披露。措辞刻意具体到「用同一个内核的其他程序」而非
+   * 含糊的「可能有影响」—— 用户要能据此判断自己是否受影响，
+   * 而含糊的警告只会被无视。
+   */
+  'popup.nodeScopeNotice':
+    'Switching a node changes the core itself, so anything else using this core is affected too — unlike the proxy toggle above, which only affects this browser.',
+
   // ---- Options ----
   'options.title': 'LostProxy Settings',
   'options.lede':
@@ -117,6 +137,13 @@ const EN = {
     'Mihomo controller responded with an unexpected payload. Is the port pointing at the external-controller?',
   'error.stateMismatch':
     'Proxy is switched ON but the browser is not using LostProxy settings. Toggle it off and on again.',
+  'error.groupNotConfigured':
+    'No proxy group selected yet. Open Settings and pick your primary proxy group.',
+  'error.groupNotFound':
+    'Proxy group "{group}" no longer exists in the core. This usually means the subscription changed. Pick a group again in Settings.',
+  'error.groupNotSelectable':
+    'The core will not let "{group}" be switched manually — groups of this kind pick a node automatically. Choose a Selector group in Settings instead.',
+  'error.selectFailed': 'Could not switch to "{node}". The core rejected the request.',
   'error.malformedMessage': 'Malformed message.',
   'error.unsupportedMessage': 'Unsupported message type.',
   'error.unknown': 'Something went wrong: {reason}',
@@ -130,6 +157,25 @@ const EN = {
   'validation.controllerSecret': 'Controller Secret must be a string.',
   'validation.webRtcLock': 'WebRTC lock must be a boolean.',
   'validation.language': 'Language must be auto, zh or en.',
+  'validation.primaryGroup': 'Primary proxy group must be a string.',
+
+  // ---- V0.2 Settings：主策略组 ----
+  'options.groupSectionTitle': 'Proxy Group',
+  'options.groupSectionHint':
+    'Which policy group LostProxy switches nodes in. Group names differ between providers, so this is never guessed — load the list and pick yours.',
+  'options.primaryGroupLabel': 'Primary Proxy Group',
+  'options.groupLoadButton': 'Load groups from core',
+  'options.groupLoading': 'Loading…',
+  'options.groupNonePlaceholder': 'Not selected',
+  'options.groupLoadedCount': 'Loaded {count} group(s).',
+  'options.groupNeedsController':
+    'Cannot reach the controller. Save the controller host, port and secret above first, then load groups.',
+  /*
+   * 非 Selector 组仍然列出来（ADR-29：判定权归内核），但标注类型，
+   * 让用户在点了才报错之前就有机会自己看出来。
+   */
+  'options.groupTypeNote': '{type} — picks nodes automatically, cannot be switched by hand',
+  'options.groupTypeSelector': 'Selector — switchable',
 } as const
 
 /** 所有可用文案键。由英文字典自动推导，无需手工维护联合类型。 */
@@ -181,6 +227,21 @@ const ZH: Record<MessageKey, string> = {
   'popup.systemProxy': '系统代理',
   'popup.tun': 'TUN',
 
+  // ---- V0.2 节点切换 ----
+  'popup.nodeSectionLabel': '节点',
+  'popup.nodeLoading': '正在读取节点…',
+  'popup.nodeSwitching': '正在切换…',
+  'popup.nodeCurrent': '当前',
+  'popup.nodeGroupPrefix': '策略组',
+  'popup.nodeNeedsController':
+    '切换节点需要 Mihomo 的外部控制。请在 Mihomo 客户端里开启它，然后在设置里填好 Controller 端口。',
+  'popup.nodeNeedsGroup': '到设置里选一个主策略组，就能在这里切节点了。',
+  'popup.nodeOpenSettings': '打开设置',
+  'popup.nodeEmpty': '这个组里没有成员。',
+  'popup.nodeRetry': '重试',
+  'popup.nodeScopeNotice':
+    '切换节点改的是内核本身，所有在用这个内核的程序都会跟着变 —— 与上面那个只影响本浏览器的代理开关不同。',
+
   // ---- Options ----
   'options.title': 'LostProxy 设置',
   'options.lede':
@@ -230,6 +291,12 @@ const ZH: Record<MessageKey, string> = {
   'error.coreBadResponse':
     'Mihomo 控制端返回了预期之外的内容。这个端口指向的确实是 external-controller 吗？',
   'error.stateMismatch': '开关是开启状态，但浏览器并没有在使用 LostProxy 的设置。请关掉再重新开启。',
+  'error.groupNotConfigured': '还没选主策略组。到设置里选一个，就能在这里切节点了。',
+  'error.groupNotFound':
+    '策略组「{group}」在内核里已经不存在了。通常是订阅变更导致的组名改变，请到设置里重新选一个组。',
+  'error.groupNotSelectable':
+    '内核不允许手动切换「{group}」—— 这类组会自动挑选节点。请到设置里改选一个 Selector 类型的组。',
+  'error.selectFailed': '切换到「{node}」失败，内核拒绝了这次请求。',
   'error.malformedMessage': '消息格式不正确。',
   'error.unsupportedMessage': '不支持的消息类型。',
   'error.unknown': '出错了：{reason}',
@@ -242,6 +309,21 @@ const ZH: Record<MessageKey, string> = {
   'validation.controllerSecret': '控制端密钥必须是字符串。',
   'validation.webRtcLock': 'WebRTC 锁必须是布尔值。',
   'validation.language': '语言必须是 auto、zh 或 en。',
+  'validation.primaryGroup': '主策略组必须是字符串。',
+
+  // ---- V0.2 设置：主策略组 ----
+  'options.groupSectionTitle': '策略组',
+  'options.groupSectionHint':
+    'LostProxy 在哪个策略组里切节点。不同机场的组名各不相同，所以此处不做任何猜测 —— 点下面的按钮把列表拉下来，自己选。',
+  'options.primaryGroupLabel': '主策略组',
+  'options.groupLoadButton': '从内核读取策略组',
+  'options.groupLoading': '读取中…',
+  'options.groupNonePlaceholder': '尚未选择',
+  'options.groupLoadedCount': '读到 {count} 个策略组。',
+  'options.groupNeedsController':
+    '连不上控制端。请先保存上面的控制端地址、端口和密钥，再读取策略组。',
+  'options.groupTypeNote': '{type} —— 自动挑节点，不能手动切换',
+  'options.groupTypeSelector': 'Selector —— 可手动切换',
 }
 
 const DICTIONARIES: Record<Locale, Record<MessageKey, string>> = { en: EN, zh: ZH }

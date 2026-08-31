@@ -39,3 +39,43 @@ describe('hidden attribute safety net', () => {
     expect(read('src/popup/style.css')).toMatch(/\.alert\s*\{[^}]*display:\s*flex/)
   })
 })
+
+describe('V0.2 节点列表', () => {
+  it('caps the node list height and lets it scroll', () => {
+    /*
+     * Popup 只有 312px 宽，高度也有限，而一个策略组可能有上百个节点。
+     * 不封顶的话 Popup 会被撑成一条长溜，底部的 footer 与承诺文案
+     * （技术方案 §13 要求始终可见）会被推出视口。
+     */
+    const css = read('src/popup/style.css')
+    expect(css).toMatch(/\.node-list\s*\{[^}]*max-height:/)
+    expect(css).toMatch(/\.node-list\s*\{[^}]*overflow-y:\s*auto/)
+  })
+
+  it('marks the current node with more than colour alone', () => {
+    // 只靠颜色区分当前项对色觉障碍用户无效。这里额外有一条左侧指示条。
+    expect(read('src/popup/style.css')).toMatch(/\.node-item\[aria-current='true'\]::before/)
+  })
+})
+
+describe('🔴 ADR-28 边界披露', () => {
+  /*
+   * 切换节点改的是内核的全局状态，效果不限于本浏览器 —— 这是本项目
+   * 第一个逸出「只影响这一个浏览器」承诺的功能。ADR-28 要求在 UI 上明示。
+   *
+   * 这三条测试守的是一个**产品承诺**而不是一个函数行为：没有它们，
+   * 后来的人重构 Popup 时把这段小字当成冗余说明删掉，不会有任何东西变红。
+   */
+  it('popup markup carries the scope notice bound to the right message', () => {
+    const html = read('src/popup/index.html')
+    expect(html).toContain('id="nodes-scope"')
+    expect(html).toContain('data-i18n="popup.nodeScopeNotice"')
+  })
+
+  it('the notice is not styled as ignorable fine print', () => {
+    // 用 --fg-secondary 而不是 --fg-tertiary：这段话解释的是唯一一个
+    // 效果逸出浏览器的操作，弱化它等于变相隐瞒。
+    const css = read('src/popup/style.css')
+    expect(css).toMatch(/\.nodes-scope\s*\{[^}]*color:\s*var\(--fg-secondary\)/)
+  })
+})
