@@ -235,7 +235,7 @@ While LostProxy is ON: Edge egress IP ≠ Chrome egress IP
 ```
 
 No unit test can cover that one — it needs two real browsers, a real core and real traffic leaving
-the machine. Currently **Definition of Done 17 / 18** verified item by item on a real machine.
+the machine. All **18 / 18 Definition of Done items** verified item by item on a real machine.
 
 The three traps that cost the most time during development, all hit for real:
 
@@ -259,10 +259,11 @@ The three traps that cost the most time during development, all hit for real:
   **unverified** — known open questions, not known guarantees.
 - It cannot be enabled while an enterprise/campus policy controls the proxy settings — extensions
   rank below policy, which is a platform rule.
-- The one remaining DoD item (the prompt shown when another proxy extension conflicts) needs a
-  SwitchyOmega-style extension installed to manufacture the conflict. The logic is pinned by unit
-  tests and fails conservatively: getting it wrong can only refuse an enable that should have
-  succeeded, never produce a false ON.
+- When another proxy extension holds the setting, LostProxy refuses to enable and names what is in
+  control rather than overriding it. Verified on a real machine using the repo's own
+  `tools/conflict-test-extension/` — a thirty-line fixture requesting only `proxy` and making no
+  network requests, because the SwitchyOmega this originally pointed at is discontinued and no
+  longer runs on current Chromium.
 
 ## Roadmap
 
