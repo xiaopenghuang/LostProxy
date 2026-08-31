@@ -28,11 +28,12 @@ import {
   pickError,
   reconcile,
 } from '../src/background/orchestrator'
-import type { ProxyInspection } from '../src/background/proxy'
+import { inspectProxy, type ProxyInspection } from '../src/background/proxy'
 import { errors } from '../src/shared/errors'
 import {
   getEnabledState,
   getLastError,
+  getSettings,
   saveSettings,
   setEnabledState,
   setLastError,
@@ -363,6 +364,108 @@ describe('handleSaveSettings', () => {
       // 关键：没提 secret，所以 secret 必须还在。
       expect(response.data.hasSecret).toBe(true)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 🔴 保存设置时的重新写入失败 —— Firefox 真机测试发现的 bug
+// ---------------------------------------------------------------------------
+
+describe('🔴 handleSaveSettings · 重新写入失败必须上报并回滚', () => {
+  /*
+   * ## 这个 bug 长什么样
+   *
+   * 原实现是 `await enableProxy(result.value)` —— **丢掉了返回值**。
+   * 于是代理开着时保存一份"写不进去"的设置会走成这样：
+   *
+   *   1. saveSettings 成功，新设置已落盘
+   *   2. enableProxy 失败（Firefox 上是 preflight 拦住了 smart 模式）
+   *   3. 那个 false 被丢掉，响应仍是 ok:true
+   *   4. UI 高亮新模式、开关还亮着 —— 而浏览器里是**旧配置**
+   *
+   * 三方撕裂：storage 说 smart，浏览器在跑 global，UI 显示 smart。
+   * 用户以为直连清单生效了，实际一条都没起作用 ——
+   * 正是 ADR-37 拒绝静默降级要避免的东西，从另一条路漏进来。
+   *
+   * ## 为什么 Chromium 上一直没暴露
+   *
+   * 那边 `preflight` 永远返回 null，而 enableProxy 的其余失败分支
+   * （被别的扩展控制）在"保存设置"这个动作里极少发生。
+   * 所以它在 Edge 上跑过整个 V0.4 都没被发现 ——
+   * 是 Firefox 的平台差异把一个一直存在的疏漏顶到了表面。
+   *
+   * ## 这里用什么模拟失败
+   *
+   * 测试跑在 chromium 平台上，`preflight` 恒为 null，没法从那条路造失败。
+   * 所以用 `failNextSet` 让浏览器写入本身失败 —— 它触发的是
+   * enableProxy 里同一个 `return { ok: false }`，
+   * 也就是同一条被丢掉的返回值。守住的是同一个疏漏。
+   */
+
+  it('🔴 reports the failure instead of returning ok', async () => {
+    await handleEnable()
+    proxySetting.failNextSet = new Error('write rejected')
+
+    const response = await handleSaveSettings({ proxyPort: 1080 })
+
+    // 原实现在这里返回 ok:true —— UI 于是显示"保存成功"。
+    expect(response.ok).toBe(false)
+  })
+
+  it('🔴 rolls the settings back so storage matches the browser', async () => {
+    /*
+     * 只报错还不够。若新设置留在 storage 里，用户就处在
+     * 「存的是新的、浏览器在跑旧的」这个状态里 —— 而它会**持久存在**：
+     * 关掉代理再想开就必须先手动改回去，
+     * 这正是真机上观察到的「一关代理就再也开不起来」。
+     */
+    await handleEnable()
+    proxySetting.failNextSet = new Error('write rejected')
+
+    await handleSaveSettings({ proxyPort: 1080 })
+
+    // storage 必须还是原来那份，而不是 1080。
+    expect((await getSettings()).proxyPort).toBe(DEFAULT_SETTINGS.proxyPort)
+  })
+
+  it('🔴 leaves the browser on the configuration that actually works', async () => {
+    // 回滚不该把浏览器也弄坏：那份旧配置本来就在跑着，
+    // 回滚后浏览器仍应处于「与 storage 一致」的状态。
+    await handleEnable()
+    proxySetting.failNextSet = new Error('write rejected')
+
+    await handleSaveSettings({ proxyPort: 1080 })
+
+    const inspection = await inspectProxy(await getSettings())
+    expect(inspection.matchesExpected).toBe(true)
+  })
+
+  it('does not roll back when the proxy is off', async () => {
+    /*
+     * 代理关着时不重新写入，所以不存在"写失败"，也就没有可回滚的东西。
+     * 这条防的是修复过度 —— 把回滚做成无条件的话，
+     * 关着代理改端口会莫名其妙地改不动。
+     */
+    const response = await handleSaveSettings({ proxyPort: 1080 })
+
+    expect(response.ok).toBe(true)
+    expect((await getSettings()).proxyPort).toBe(1080)
+  })
+
+  it('keeps the secret intact across a rollback', async () => {
+    /*
+     * 回滚走的是 saveSettings(before)，而 `before` 带着 secret 明文。
+     * 若哪天有人把回滚改成只回滚"用户刚改的那几个字段"，
+     * secret 可能被洗成空串 —— 而那是用户得重新输入一次的东西，
+     * 且他完全不知道为什么。
+     */
+    await saveSettings({ controllerSecret: SECRET })
+    await handleEnable()
+    proxySetting.failNextSet = new Error('write rejected')
+
+    await handleSaveSettings({ proxyPort: 1080 })
+
+    expect((await getSettings()).controllerSecret).toBe(SECRET)
   })
 })
 

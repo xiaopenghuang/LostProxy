@@ -339,10 +339,38 @@ export async function handleDisable(): Promise<Response<StatusSnapshot>> {
  *
  * ⚠️ 极易漏掉的一步：代理正开着时改了 host/port，必须**用新设置重新写入**，
  * 否则浏览器还指向旧端口，而 UI 显示的是新端口——一个隐蔽的状态撕裂。
+ *
+ * 🔴 **重新写入的结果必须检查**（Firefox 真机测试发现的 bug）。
+ *
+ * 原实现写的是 `await enableProxy(result.value)` —— 丢掉了返回值。
+ * 后果在 Firefox 上是这样一条路径：
+ *
+ *   1. 代理开着，用户在 Popup 上点「智能」
+ *   2. `saveSettings` 成功存下 `routingMode: 'smart'`
+ *   3. `enableProxy` 被 `preflight` 拦住（Firefox 不支持内联 PAC），返回 ok:false
+ *   4. **那个 false 被丢掉**，响应仍是 ok:true
+ *   5. UI 高亮「智能」，开关还亮着 —— 而浏览器里仍是切换前那份**全局**配置
+ *
+ * 用户以为直连清单生效了，实际一条都没起作用。这正是 ADR-37 拒绝
+ * 静默降级要避免的东西，从另一条路漏了进来。
+ *
+ * 关键在于**设置已经存下去了**，所以这个错误状态会持久存在 ——
+ * 关掉代理再想开就必须先切回全局（用户观察到的现象），
+ * 而那条路径之所以老实，只是因为 `handleEnable` 检查了返回值。
+ *
+ * 修法是把写入失败当作**整个保存操作的失败**上报，并且**回滚设置** ——
+ * 见下方注释里为什么必须回滚而不只是报错。
+ *
+ * ⚠️ 这个 bug 在 Chromium 上撞不到：那边 `preflight` 永远返回 null，
+ *    而 `enableProxy` 的其余失败分支（被别的扩展控制）在保存设置时
+ *    极少发生。所以它在 Edge 上跑了整个 V0.4 都没暴露 ——
+ *    平台差异把一个一直存在的疏漏顶到了表面。
  */
 export async function handleSaveSettings(
   patch: Partial<Settings>,
 ): Promise<Response<ResponsePayloads['SAVE_SETTINGS']>> {
+  const before = await getSettings()
+
   const result = await saveSettings(patch)
   if (!result.ok) {
     return { ok: false, error: errors.invalidSettings(result.errors) }
@@ -350,7 +378,26 @@ export async function handleSaveSettings(
 
   const enabled = await getEnabledState()
   if (enabled) {
-    await enableProxy(result.value)
+    const applied = await enableProxy(result.value)
+    if (!applied.ok) {
+      /*
+       * 🔴 **回滚**，不只是报错。
+       *
+       * 若只报错而把新设置留在 storage 里，用户会处在一个
+       * 「存的是 smart、浏览器在跑 global、UI 显示 smart」的三方撕裂状态。
+       * 那正是他观察到的怪现象的根源。
+       *
+       * 回滚之后三者重新一致：设置回到写入前那份，浏览器仍在跑那份，
+       * UI 收到 ok:false 于是重绘成那份。用户看到的是
+       * 「切换没成功 + 一句说明为什么」—— 一次干净的失败。
+       *
+       * 回滚本身用什么写入？用 `before`，也就是**已经在浏览器里跑着**的那份。
+       * 它此前必然是能写进去的（否则代理压根开不起来），所以这次回滚
+       * 不会再失败。即便真失败了也不会更糟：浏览器里那份配置没被动过。
+       */
+      await saveSettings(before)
+      return { ok: false, error: applied.error }
+    }
   }
   await syncWebRtcLock(enabled, result.value.webRtcLockEnabled)
 
