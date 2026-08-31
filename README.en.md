@@ -13,6 +13,8 @@
 ![Vite](https://img.shields.io/badge/Vite-8%20(Rolldown)-646CFF?logo=vite&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-464%20passing-brightgreen)
 
+[![Release](https://img.shields.io/github/v/release/xiaopenghuang/LostProxy?label=download&color=success)](https://github.com/xiaopenghuang/LostProxy/releases/latest)
+
 [中文](README.md) · **English**
 
 </div>
@@ -63,6 +65,25 @@ Mihomo does all of that. This project only controls scope.
   leaving no broken state to repair by hand.
 - **Instant Chinese/English switching** — hand-rolled i18n rather than `chrome.i18n`, which can
   only read the browser UI language and cannot be switched by the user.
+
+## Install
+
+Download `lostproxy-v<version>.zip` from
+[Releases](https://github.com/xiaopenghuang/LostProxy/releases/latest), **unzip it**, then:
+
+1. Open `edge://extensions`
+2. Enable **Developer mode** (bottom left)
+3. Click **Load unpacked** and select **the unzipped folder** (you should see `manifest.json`
+   directly inside it)
+
+> **Why there is no double-click installer**: Chromium rejects `.crx` files downloaded from a URL
+> (`CRX_REQUIRED_PROOF_MISSING`), so "load unpacked" is the only route outside the store. One-click
+> installation will come with an Edge Add-ons listing; that is for later.
+
+A proxy tool is worth checking the hash of — the release page carries a SHA-256. You can also
+[build from source](#building-from-source).
+
+**Installing it alone does not get you connected** — you also need the prerequisites below.
 
 ## Prerequisites
 
@@ -115,7 +136,7 @@ TUN          = OFF     ← leaving it on takes over system-wide traffic
 These two are exactly what this project replaces; with either enabled, LostProxy has no reason to
 exist.
 
-## Build and load
+## Building from source
 
 ```bash
 npm install

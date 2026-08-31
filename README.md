@@ -13,6 +13,8 @@
 ![Vite](https://img.shields.io/badge/Vite-8%20(Rolldown)-646CFF?logo=vite&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-464%20passing-brightgreen)
 
+[![Release](https://img.shields.io/github/v/release/xiaopenghuang/LostProxy?label=download&color=success)](https://github.com/xiaopenghuang/LostProxy/releases/latest)
+
 **中文** · [English](README.en.md)
 
 </div>
@@ -52,6 +54,22 @@ Chrome ──▶ DIRECT ──────────────────�
   并说明是谁在控制。
 - **卸载即完全撤销** — 停用或卸载扩展时由浏览器自动清除代理设置，不留下需要手工修的坏状态。
 - **中英双语即时切换** — 自实现 i18n，不依赖 `chrome.i18n`（后者只能读浏览器界面语言，用户无法切换）。
+
+## 安装
+
+从 [Releases](https://github.com/xiaopenghuang/LostProxy/releases/latest) 下载
+`lostproxy-v<版本>.zip`，**解压**，然后：
+
+1. 打开 `edge://extensions`
+2. 打开左下角 **开发人员模式 / Developer mode**
+3. 点 **加载解压缩的扩展 / Load unpacked**，选**解压出来的那个文件夹**（里面应该能直接看到 `manifest.json`）
+
+> **为什么不是双击安装**：Chromium 从 URL 下载 `.crx` 会直接拒绝（`CRX_REQUIRED_PROOF_MISSING`），
+> 商店之外只有「加载解压缩」这一条路。上架 Edge Add-ons 商店后会有一键安装，那是后面的事。
+
+代理工具值得核对哈希，Release 页面附了 SHA-256。也可以直接[从源码构建](#从源码构建)。
+
+**装上它本身不会让你能上网** —— 还需要下面这些前置条件。
 
 ## 前置条件
 
@@ -99,7 +117,7 @@ TUN          = OFF     ← 开着会接管全系统流量
 
 这两项正是本项目要替代的方案，开着 LostProxy 就没有存在价值了。
 
-## 构建与加载
+## 从源码构建
 
 ```bash
 npm install
