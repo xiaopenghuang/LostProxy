@@ -218,3 +218,73 @@ describe('真实校园域名（Master 实测场景）', () => {
     expect(evaluatePac(none, 'www.swpu.edu.cn')).toBe(PROXY_2080)
   })
 })
+
+describe('🔴 生成的脚本必须是纯 ASCII', () => {
+  /*
+   * 真机报错：'pacScript.data' supports only ASCII code
+   * (encode URLs in Punycode format).
+   *
+   * 成因是此方在脚本模板里写了中文注释 —— 96 个非 ASCII 字符让整个写入被拒。
+   * 症状是「写入代理设置失败」，而错误文本里的 "encode URLs in Punycode"
+   * 会把人往"域名编码"的方向误导，实际问题在注释上。
+   */
+  it.each([
+    ['no rules', []],
+    ['ascii rules', ['*.edu.cn', 'lib.example.org']],
+    ['many rules', Array.from({ length: 50 }, (_, i) => `host-${i}.example.com`)],
+  ])('the script is pure ASCII with %s', (_label, rules) => {
+    const script = buildPacScript('127.0.0.1', 7890, rules as string[])
+    const offenders = [...script].filter((c) => c.charCodeAt(0) > 127)
+    expect(offenders).toEqual([])
+  })
+
+  it('carries no CJK comments', () => {
+    // 直接断言这一类字符不存在，因为它正是踩过的那个坑。
+    expect(buildPacScript('127.0.0.1', 7890, ['*.edu.cn'])).not.toMatch(/[\u4e00-\u9fff]/)
+  })
+})
+
+describe('IDN 规则自动转 Punycode', () => {
+  /*
+   * Chromium 的错误文本要求 "encode URLs in Punycode format"。
+   * 让用户自己去找一个转换器，是把我们的实现约束推给用户 ——
+   * 而浏览器自带的 URL 就能做这件事。
+   */
+  it.each([
+    ['*.清华.edu.cn', '*.xn--xkrp53d.edu.cn'],
+    ['中文.com', 'xn--fiq228c.com'],
+  ])('%s → %s', (input, expected) => {
+    expect(sanitizeRule(input)).toBe(expected)
+  })
+
+  it('leaves ascii rules untouched', () => {
+    expect(sanitizeRule('*.edu.cn')).toBe('*.edu.cn')
+  })
+
+  it('an IDN rule actually matches its punycode host in the script', () => {
+    // 端到端：转换后的规则必须真的能命中浏览器传来的 punycode host。
+    const script = buildPacScript('127.0.0.1', 7890, ['*.清华.edu.cn'])
+    expect(evaluatePac(script, 'www.xn--xkrp53d.edu.cn')).toBe('DIRECT')
+    expect(evaluatePac(script, 'example.com')).toBe(PROXY)
+  })
+
+  it('🔴 punycode conversion does not weaken the injection guard', () => {
+    /*
+     * 白名单作用在**转换结果**上，所以 IDN 支持没有放松最后那道闸门。
+     * 这些载荷即便经过 URL 解析也必须被拒。
+     */
+    for (const payload of [
+      "*.中国'; return 'DIRECT",
+      '中文.com"; return "DIRECT',
+      '清华.edu.cn/path',
+      '中国:8080',
+    ]) {
+      expect(sanitizeRule(payload)).toBeNull()
+    }
+  })
+
+  it('the script stays ASCII even when given IDN input', () => {
+    const script = buildPacScript('127.0.0.1', 7890, ['*.清华.edu.cn', '中文.com'])
+    expect([...script].filter((c) => c.charCodeAt(0) > 127)).toEqual([])
+  })
+})

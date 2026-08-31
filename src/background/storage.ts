@@ -22,11 +22,11 @@ import {
   DEFAULT_SETTINGS,
   PORT_MAX,
   PORT_MIN,
-  RULE_ALLOWED_PATTERN,
   RULE_MAX_COUNT,
   RULE_MAX_LENGTH,
   STORAGE_KEYS,
 } from '../shared/constants'
+import { sanitizeRule } from './pac'
 import type { Language, MessageKey, MessageParams } from '../shared/i18n'
 import type {
   NormalizedError,
@@ -123,7 +123,7 @@ export function coerceSettings(raw: unknown): Settings {
               typeof r === 'string' &&
               r.trim().length > 0 &&
               r.trim().length <= RULE_MAX_LENGTH &&
-              RULE_ALLOWED_PATTERN.test(r.trim()),
+              sanitizeRule(r.trim()) !== null,
           ),
         )
       : DEFAULT_SETTINGS.directRules,
@@ -212,7 +212,17 @@ export function validateSettings(patch: Partial<Settings>, base: Settings): Vali
           add('validation.ruleTooLong', { rule: trimmed.slice(0, 40), max: RULE_MAX_LENGTH })
           break
         }
-        if (!RULE_ALLOWED_PATTERN.test(trimmed)) {
+        /*
+         * 用 sanitizeRule 判定而不是直接套 RULE_ALLOWED_PATTERN。
+         *
+         * 后者只认 ASCII，于是 `*.清华.edu.cn` 会在保存这一步就被拒 ——
+         * 而它是完全合法的输入，只是需要转成 Punycode（Chromium 的错误文本
+         * 也正是这么要求的）。sanitizeRule 会先转换再套同一条白名单，
+         * 所以这里改用它之后，IDN 能过、而注入载荷照旧被拒。
+         *
+         * 单一判定来源也避免了「校验放过、生成时又丢掉」这类两处规则不一致。
+         */
+        if (sanitizeRule(trimmed) === null) {
           // 只回显前 40 字符：规则可能很长，而错误文案要能读。
           add('validation.ruleInvalidChar', { rule: trimmed.slice(0, 40) })
           break
