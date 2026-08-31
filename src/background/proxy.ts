@@ -76,30 +76,22 @@ export async function checkSupported(settings: Settings): Promise<NormalizedErro
   return blocker === null ? null : BLOCKER_TO_ERROR[blocker]()
 }
 
-/**
- * 索取这份配置所需的可选权限，然后复查是否已具备。
+/*
+ * ⚠️⚠️ **这里曾有一个 `ensureSupported`，它会顺手索取缺失的权限。删掉了。**
  *
- * ⚠️ **只能从用户手势的调用栈里调**（Firefox 的 `permissions.request()`
- *    无手势时直接拒绝）。所以它出现在处理「用户点了开关 / 切了模式」
- *    这两条消息的路径上，绝不在 `reconcile()` 之类的后台流程里。
+ * 那个函数的写法是「查一次 → 不行就 `requestPermissions()` → 再查一次」，
+ * 而它**在 Firefox 上永远走不通**：`permissions.request()` 只能从
+ * 用户手势的调用栈里调用，而背景脚本处理 popup 消息**不算**用户手势
+ * （MDN User actions 页明确列出这条），且路径上的每个 `await`
+ * 都会把手势状态烧掉（Bugzilla 1398833）。
  *
- * 返回 `null` 表示现在可以用了；返回错误表示用户拒绝了授权，
- * 或者这个平台根本做不到。
+ * 后果是一个自相矛盾的提示：用户看到「要么在弹窗里允许」，
+ * 而那个弹窗永远不出现 —— 一个说明了修法却无法执行的错误。
  *
- * 为什么要在 request 之后**再查一次** `checkSupported`：`request()` 返回
- * true 只说明弹窗被接受，而"能不能用"是由 `supports` 定义的 ——
- * 两者之间可能还有别的条件（将来加了新 blocker 时尤其如此）。
- * 以 `supports` 为准，`request` 只是尝试改变它的答案。
+ * 现在索权只发生在设置页的点击回调里（`options/options.ts`），
+ * 背景层**只查、不要**。所以这里只留 `checkSupported`，
+ * 调用点直接用它 —— 少一层封装，也少一个会让人以为"它会自己去要权限"的名字。
  */
-export async function ensureSupported(settings: Settings): Promise<NormalizedError | null> {
-  const first = await checkSupported(settings)
-  if (first === null) return null
-
-  const granted = await platform.requestPermissions(settings)
-  if (!granted) return first
-
-  return checkSupported(settings)
-}
 
 /**
  * 巡检浏览器当前代理状态。
@@ -164,7 +156,7 @@ export async function enableProxy(settings: Settings): Promise<ApplyResult> {
    * 顺序颠倒的话，一个既没授权又开着分流的用户会先被要求去授权，
    * 授完权再被告知分流做不到 —— 两次往返。
    */
-  const unsupported = await ensureSupported(settings)
+  const unsupported = await checkSupported(settings)
   if (unsupported !== null) {
     return { ok: false, error: unsupported }
   }

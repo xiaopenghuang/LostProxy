@@ -31,11 +31,16 @@ Firefox support. All business logic and UI shared; browser differences confined 
   「InPrivate 也走代理」在 Firefox 上是默认行为。
   **Private-window access is required** — Firefox refuses proxy changes without it. LostProxy says
   where to enable it instead of showing a false ON.
-- **智能分流需要一次额外授权，且只在你要用时才问。** Firefox 的 `proxy.settings`
+- **智能分流需要一次额外授权，入口在设置页。** Firefox 的 `proxy.settings`
   只支持 `autoConfigUrl`、没有内联 PAC，所以分流走 `proxy.onRequest` ——
   浏览器对**每个请求**问扩展一次「走代理还是直连」。这意味着扩展能看到你访问的
-  每一个网址，所以 Firefox 必须先征得同意。第一次把模式切成「智能」时弹一次，
-  不给就继续用全局代理，给了之后随时能在 `about:addons` 里收回。
+  每一个网址，所以 Firefox 必须先征得同意。到**设置页 → 直连规则 → 「允许逐请求判断」**
+  授权，不给就继续用全局代理，给了之后随时能在 `about:addons` 里收回。
+
+  授权按钮放在设置页而不是"切到智能时弹窗"，是因为 Firefox 只允许
+  `permissions.request()` 从真正的用户输入回调里调用（背景脚本处理消息明确不算，
+  手势也活不过一次 `await`），而从 popup 请求会撞上一个仍未修复的 Firefox bug ——
+  授权弹窗出现在 popup **背后**且点不到（Bugzilla 1798454）。
 
   刻意**不**在安装时一次要掉：默认只要 `http://127.0.0.1/*` 本身是这个项目的
   一项卖点 —— 权限面小意味着即便扩展被攻破，能拿到的东西也有限。
@@ -46,11 +51,14 @@ Firefox support. All business logic and UI shared; browser differences confined 
   在 Firefox 上根本不需要。
   Smart routing asks for one permission the first time you enable it, because
   Firefox has no inline PAC and must consult the extension per request.
-- **运行时错误信号更弱。** Firefox 的 `proxy.onError` 不带 `fatal` 字段，
-  无法区分「请求被拦住了（没泄漏）」与「已经直连出去了（可能泄漏）」。
-  此时报一条可自愈的告警、不对是否泄漏做任何承诺 —— 而不是一律按最坏情况报警，
-  因为那会训练用户点掉这类告警，连真正的泄漏警告一起点掉。
-  **Weaker runtime error signal**: no `fatal` field, so the alert promises nothing either way.
+- **运行时错误的含义相反，所以告警更重。** Firefox 的 `proxy.onError` 不带
+  `fatal` 字段，但那不是"信息更少" —— 按 Bugzilla 1528873（Mozilla 标记 WONTFIX、
+  认定是预期行为），`proxy.onRequest` 出错时请求会**照常直连出去**，
+  只是会触发 `onError`。所以在 Firefox 上收到这个事件**就意味着已经漏过一次**，
+  报的是那条不会自动消失、需要你手动确认的泄漏告警。
+  **Runtime errors mean the opposite here**: per Bugzilla 1528873 an `onRequest`
+  failure lets the request go direct, so `onError` firing means a leak already
+  happened — LostProxy raises the non-self-healing leak alert.
 
 ### 内部 / Internals
 
@@ -62,9 +70,15 @@ Firefox support. All business logic and UI shared; browser differences confined 
 - `proxy.ts` / `privacy.ts` 现在零浏览器 API 调用，只剩决策。
   出现一次 `chrome.` 调用会让测试变红 —— 因为这类错误在 Edge 上完全正常、
   只在 Firefox 上炸，而开发时手边通常只有一个浏览器。
-- 单元测试 917 → 994 项。新增 Firefox 平台测试 50 项（用**独立的 Firefox 形状 mock**，
+- 单元测试 917 → 1076 项。新增 Firefox 平台测试（用**独立的 Firefox 形状 mock**，
   复用 Chromium 的会把要防的差异抹平）与产物级断言。
-  四个「抄过去也能跑但是错的」陷阱各做过反向验证。
+  每个「抄过去也能跑但是错的」陷阱都做过反向验证：先把错误改回去，
+  确认测试真的会红，再恢复。
+- **索取可选权限整个移出了平台契约**（`BrowserPlatform` 里刻意没有
+  `requestPermissions`）。它只能发生在设置页的点击回调里，
+  而且回调内在 `request()` 之前不能有任何 `await` —— 这两条约束都由
+  产物级断言守着：两个背景产物里都不许出现 `permissions.request`。
+  详见 ADR-39。
 
 ### 尚未完成 / Not yet done
 

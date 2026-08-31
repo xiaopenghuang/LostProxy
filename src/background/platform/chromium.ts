@@ -238,10 +238,10 @@ export const chromium: BrowserPlatform = {
     return null
   },
 
-  /** 没有可选权限要要 —— 安装时那三项就是全部。 */
-  async requestPermissions(): Promise<boolean> {
-    return true
-  },
+  /*
+   * ⚠️ 没有 `requestPermissions` —— 契约里已经删掉了（见 `types.ts`）。
+   *    Chromium 本来也无事可做：安装时那三项权限就是全部。
+   */
 
   /**
    * Chromium 没有任何写入前置授权。

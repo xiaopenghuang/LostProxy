@@ -33,10 +33,14 @@ import {
 } from '../src/background/platform/firefox'
 import { shouldBypassProxy } from '../src/background/pac'
 import { DEFAULT_SETTINGS } from '../src/shared/constants'
+import { isSelfHealing } from '../src/shared/errors'
 import type { Settings } from '../src/shared/types'
 import {
   askFirefoxRouter,
+  clearFirefoxRequestListeners,
   ffOnRequestPresent,
+  ffPermissionEventsPresent,
+  ffPermissionListenerCounts,
   ffRawRouterAnswer,
   emitFirefoxProxyError,
   ffErrorListenerCount,
@@ -47,8 +51,10 @@ import {
   ffRequestFilter,
   ffRequestListenerCount,
   ffWebRtcSetting,
+  grantFirefoxPermission,
   installFirefoxMock,
   removeIncognitoApi,
+  revokeFirefoxPermission,
 } from './firefox-mock'
 
 const settings: Settings = { ...DEFAULT_SETTINGS, proxyHost: '127.0.0.1', proxyPort: 7890 }
@@ -444,27 +450,46 @@ describe('readProxyState', () => {
 // ===========================================================================
 
 describe('normalizeProxyError', () => {
-  it('🔴 does not claim a leak, because Firefox cannot tell', () => {
+  it('🔴🔴 报泄漏 —— 在 Firefox 上这个事件就意味着已经直连过了', () => {
     /*
-     * Firefox 的 proxy.onError 传的是一个普通 Error，**没有 fatal 字段**，
-     * 所以无法区分「请求被拦住了」与「已经直连出去了」。
+     * 依据是 Bugzilla 1528873，Mozilla 标记 **WONTFIX** 并认定是预期行为：
      *
-     * 此方在这里犹豫过，因为直觉是"信息不足时报更严重的那个"。
-     * 但那个直觉在这里是错的，理由具体：PROXY_LEAK_SUSPECTED 的设计是
-     * **绝不自动消失、必须由用户显式确认**（ADR-22），因为它记录的是
-     * 一个已经发生的事实。用它表达一个我们并不知道有没有发生的泄漏，
-     * 会训练用户去点掉这类告警 —— 而一旦养成这个习惯，
-     * 真正的泄漏告警也会被顺手点掉。那比报得轻要糟得多。
+     *   > if the `proxy.onRequest` listener throws an exception, the fetch
+     *   > **proceeds without a proxy** ... Making the listener async; i.e.,
+     *   > having it return a rejected promise instead of throw an exception,
+     *   > still lets the fetch happen without a proxy, but **does** call the
+     *   > `proxy.onError` listener.
+     *
+     * 我们的 routeListener 是 async 的，正好落在后半句 ——
+     * 请求已经裸奔出去了，然后我们收到这个事件。
+     *
+     * ⚠️ 此方原先断言的是 PROXY_RUNTIME_ERROR，理由写的是"信息不足时
+     *    不要滥用那条不可自愈的告警"。那个顾虑本身成立，但**前提是错的**：
+     *    此方当时假定 Firefox 在求值失败时会拒绝该请求，而 Mozilla 说相反。
+     *
+     *    决定性的是文案 —— PROXY_RUNTIME_ERROR 对应的
+     *    `error.proxyBlocked` 明写「你的真实 IP **没有泄漏**」。
+     *    在这条路径上那句话是假的，而它恰好是全项目唯一绝不能说错的一句。
      */
-    expect(normalizeProxyError(new Error('pac failed')).code).toBe('PROXY_RUNTIME_ERROR')
-    expect(normalizeProxyError(new Error('pac failed')).code).not.toBe('PROXY_LEAK_SUSPECTED')
+    expect(normalizeProxyError(new Error('pac failed')).code).toBe('PROXY_LEAK_SUSPECTED')
+    expect(normalizeProxyError(new Error('pac failed')).code).not.toBe('PROXY_RUNTIME_ERROR')
+  })
+
+  it('🔴 报的这条不自愈 —— 它记录的是已经发生的事实', () => {
+    /*
+     * 与上一条互为一体：选 PROXY_LEAK_SUSPECTED 的代价就是它不会自动消失
+     * （ADR-22），必须由用户显式 Dismiss。这条测试把那个代价钉住 ——
+     * 若将来有人为了"少一条挂着的告警"把它改成可自愈，
+     * 等于让一次真实泄漏的记录悄悄消失。
+     */
+    expect(isSelfHealing(normalizeProxyError(new Error('x')).code)).toBe(false)
   })
 
   it('survives a non-Error payload', () => {
     // 事件的实参形状只有 MDN 一句话作依据（"An Error object"）。
     // 传什么都不该炸 —— 这是个诊断用的监听，不值得让它拖垮扩展。
-    expect(normalizeProxyError(undefined).code).toBe('PROXY_RUNTIME_ERROR')
-    expect(normalizeProxyError('a string').code).toBe('PROXY_RUNTIME_ERROR')
+    expect(normalizeProxyError(undefined).code).toBe('PROXY_LEAK_SUSPECTED')
+    expect(normalizeProxyError('a string').code).toBe('PROXY_LEAK_SUSPECTED')
   })
 
   it('stamps a timestamp', () => {
@@ -488,7 +513,7 @@ describe('onProxyError', () => {
 
     emitFirefoxProxyError(new Error('pac eval failed'))
 
-    expect(received).toEqual(['PROXY_RUNTIME_ERROR'])
+    expect(received).toEqual(['PROXY_LEAK_SUSPECTED'])
   })
 
   it('🔴 does not throw when proxy.onError is unavailable', () => {
@@ -673,46 +698,46 @@ describe('🔴 supports 必须能在「保存设置」路径上单独使用', ()
   })
 })
 
-describe('requestPermissions', () => {
+describe('🔴🔴 平台层不索取权限', () => {
   const smart: Settings = { ...settings, routingMode: 'smart', directRules: ['*.edu.cn'] }
 
-  it('asks for the permission and reports the grant', async () => {
-    ffPermissions.granted = false
-    ffPermissions.willGrant = true
+  /*
+   * 这一组测的是一件**不该存在的事**。
+   *
+   * 此方原先在平台层放了 `requestPermissions(settings)`，由 orchestrator
+   * 在处理 SAVE_SETTINGS / ENABLE 时调用，注释里写着"那两条消息都由
+   * 用户点击发出，所以手势成立"。那句话是错的：
+   *
+   *   - MDN User actions 页：「the background page message handler is
+   *     **not** considered to be handling a user action」
+   *   - 且路径上任何一个 `await` 都会烧掉手势状态（Bugzilla 1398833）
+   *
+   * 于是 `request()` 抛错、被 catch 吞掉，用户看到一句"要么在弹窗里允许"，
+   * 而那个弹窗永远不出现。索权现在只发生在设置页的点击回调里。
+   */
 
-    expect(await firefox.requestPermissions(smart)).toBe(true)
-    expect(ffPermissions.requestCalls).toBe(1)
-    // 同意之后 supports 应当放行 —— 这是最常见的真实流程。
-    expect(await firefox.supports(smart)).toBeNull()
-  })
-
-  it('reports refusal without throwing', async () => {
-    ffPermissions.granted = false
-    ffPermissions.willGrant = false
-
-    expect(await firefox.requestPermissions(smart)).toBe(false)
-    expect(await firefox.supports(smart)).toBe('routingPermissionRequired')
-  })
-
-  it('🔴 does not prompt when the config does not need routing', async () => {
+  it('🔴🔴 平台对象上没有 requestPermissions', () => {
     /*
-     * 不该为了一个用不到的功能弹窗。用户在全局模式下点开关，
-     * 突然被要求"访问所有网站"会显得这个扩展在乱要权限 ——
-     * 而信任一旦丢了就不容易挽回，尤其对一个代理工具。
+     * 断言"不存在"而不是删掉测试：删掉之后，下一个人（包括此方）
+     * 完全可能因为"supports 说缺权限，那自然该有个地方去要"
+     * 而把它加回来 —— 而它会在真机上静默失败。
+     * 留一条会红的测试，比留一句注释可靠。
      */
+    expect('requestPermissions' in firefox).toBe(false)
+  })
+
+  it('🔴 supports 只查不要 —— 缺权限时不触发任何 request', async () => {
     ffPermissions.granted = false
     ffPermissions.requestCalls = 0
 
-    expect(await firefox.requestPermissions({ ...settings, routingMode: 'global' })).toBe(true)
+    expect(await firefox.supports(smart)).toBe('routingPermissionRequired')
+    // 查询函数弹窗是灾难：它会在保存设置、开启代理、渲染状态等多处被调用。
     expect(ffPermissions.requestCalls).toBe(0)
   })
 
-  it('treats a throw as refusal', async () => {
-    // 无用户手势时 Firefox 会抛。当成"没拿到"，而不是让异常冒到 UI。
-    ffPermissions.granted = false
-    ffPermissions.failNextRequest = new Error('no user gesture')
-
-    expect(await firefox.requestPermissions(smart)).toBe(false)
+  it('已授权时 supports 放行', async () => {
+    ffPermissions.granted = true
+    expect(await firefox.supports(smart)).toBeNull()
   })
 })
 
@@ -1010,6 +1035,148 @@ describe('🔴 registerListeners · 顶层注册的分流监听', () => {
 })
 
 // ===========================================================================
+// 🔴🔴 授权之后必须重挂监听
+// ===========================================================================
+
+describe('🔴🔴 permissions.onAdded · 授权后重挂分流监听', () => {
+  const smart: Settings = { ...settings, routingMode: 'smart', directRules: ['*.edu.cn'] }
+
+  beforeEach(() => {
+    clearFirefoxRequestListeners()
+  })
+
+  it('🔴🔴 未授权时启动、随后授权 —— 监听必须挂上', async () => {
+    /*
+     * 此方原先在 registerRouter 里写着「用户授权之后 Firefox 会重启扩展，
+     * 届时重新注册」。**那是错的。** MDN 说的是要监听 onAdded/onRemoved。
+     *
+     * 按错的假设走会得到这条路径：
+     *   1. 扩展启动，还没有 `<all_urls>` → addListener 失败
+     *   2. 用户在设置页授权
+     *   3. 扩展继续跑着，监听始终没挂上
+     *   4. 而 supports() 现在返回 null，代理照常以智能模式开启
+     *   5. **直连清单被静默忽略** —— 全走代理，页面能开，看不出问题
+     *
+     * 第 5 步正是整个分流设计要防的事，从授权这条路漏了进来。
+     *
+     * ⚠️ 它靠事件页空闲卸载、下次唤醒重跑顶层代码**碰巧**会自愈。
+     *    但那是巧合：用户如果一直在用浏览器，或授权后立刻访问站点，
+     *    就撞在窗口里。依赖巧合的安全性等于没有安全性。
+     */
+    ffPermissions.granted = false
+    ffOnRequestPresent.value = false // 模拟"没权限所以挂不上"
+
+    firefox.registerListeners(async () => ({ enabled: true, settings: smart }))
+    expect(ffRequestListenerCount()).toBe(0)
+
+    // 用户在设置页点了授权按钮。
+    ffOnRequestPresent.value = true
+    grantFirefoxPermission()
+
+    expect(ffRequestListenerCount()).toBe(1)
+
+    // 而且它真的能答题 —— 挂上了但不工作等于没挂。
+    expect(Array.isArray(await askFirefoxRouter('https://www.google.com/'))).toBe(true)
+    expect(await askFirefoxRouter('https://x.edu.cn/')).toEqual({ type: 'direct' })
+  })
+
+  it('🔴 注册时就挂上了 onAdded 与 onRemoved', () => {
+    firefox.registerListeners(async () => ({ enabled: true, settings: smart }))
+
+    const counts = ffPermissionListenerCounts()
+    expect(counts.added).toBe(1)
+    expect(counts.removed).toBe(1)
+  })
+
+  it('🔴 重挂不会累积成两个监听', async () => {
+    /*
+     * onAdded 可能在监听已经挂着时触发（用户授了另一个不相关的权限）。
+     * 若不先摘就挂，会累积出多个监听 —— 而 `askFirefoxRouter` 取第一个
+     * 非空答案，所以症状不是"答错"而是"每个请求被问 N 次"，
+     * 一个只在性能上表现出来、极难归因的问题。
+     */
+    firefox.registerListeners(async () => ({ enabled: true, settings: smart }))
+    expect(ffRequestListenerCount()).toBe(1)
+
+    grantFirefoxPermission()
+    grantFirefoxPermission()
+
+    expect(ffRequestListenerCount()).toBe(1)
+  })
+
+  it('权限被撤销后重挂一次 —— 与 supports 保持一致', () => {
+    firefox.registerListeners(async () => ({ enabled: true, settings: smart }))
+
+    revokeFirefoxPermission()
+
+    // 撤销后 supports 会重新拦住智能模式，两边说的是同一件事。
+    expect(ffRequestListenerCount()).toBe(1)
+  })
+
+  it('🔴 事件 API 不存在时不抛 —— 顶层抛错会让整个扩展起不来', () => {
+    ffPermissionEventsPresent.value = false
+
+    expect(() =>
+      firefox.registerListeners(async () => ({ enabled: true, settings: smart })),
+    ).not.toThrow()
+  })
+})
+
+// ===========================================================================
+// 🔴🔴 监听内部抛出 = 静默直连
+// ===========================================================================
+
+describe('🔴🔴 routeListener 兜住一切异常', () => {
+  const smart: Settings = { ...settings, routingMode: 'smart', directRules: ['*.edu.cn'] }
+
+  beforeEach(() => {
+    clearFirefoxRequestListeners()
+  })
+
+  it('🔴🔴 状态对象畸形时走代理，不让异常穿出去', async () => {
+    /*
+     * Bugzilla 1528873（Mozilla 标记 **WONTFIX**，认定是预期行为）：
+     *   > if the `proxy.onRequest` listener throws an exception, the fetch
+     *   > **proceeds without a proxy**
+     * async 监听返回 rejected promise 也一样 —— 请求照样裸奔出去。
+     *
+     * 所以这个监听里任何一次意外抛出，代价都不是"这个请求失败"，
+     * 而是"这个请求直连"。末尾那个 `null` 防不住它：
+     * `null` 只管"代理地址连不上"，管不了"我们压根没给出答案"。
+     *
+     * 此方最初只把 `readState()` 包进 try，把 needsRuleBasedRouting /
+     * sanitizeRules / decideRoute 留在外面。这条测试模拟其中一步抛出。
+     */
+    firefox.registerListeners(async () => {
+      // 一个能通过 await、但会让后续读字段炸掉的返回值。
+      return { enabled: true, settings: null } as unknown as {
+        enabled: boolean
+        settings: Settings
+      }
+    })
+
+    const answer = (await askFirefoxRouter('https://www.google.com/')) as unknown[]
+
+    expect(Array.isArray(answer)).toBe(true)
+    expect(answer[1]).toBeNull() // fail-closed 的末尾 null 仍在
+  })
+
+  it('🔴 URL 畸形时走代理', async () => {
+    /*
+     * 解析不出主机名的 URL 走代理而不是直连 —— 同一条精神：
+     * 拿不准的时候选更保守的那个。一个我们看不懂的 URL 直连出去，
+     * 可能正是那个会暴露真实 IP 的请求。
+     */
+    firefox.registerListeners(async () => ({ enabled: true, settings: smart }))
+
+    const answer = (await askFirefoxRouter('not-a-url')) as unknown[]
+
+    expect(Array.isArray(answer)).toBe(true)
+    expect(answer[1]).toBeNull()
+  })
+})
+
+// ===========================================================================
 // 契约完整性
 // ===========================================================================
 
@@ -1020,7 +1187,6 @@ describe('契约', () => {
 
   it.each([
     'supports',
-    'requestPermissions',
     'preflight',
     'readProxyState',
     'applyProxy',

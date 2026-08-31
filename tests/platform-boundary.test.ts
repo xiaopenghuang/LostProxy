@@ -317,6 +317,46 @@ describe('🔴🔴 构建产物里不得混入另一个平台的代码', () => {
     expect(code).not.toContain('FindProxyForURL')
   })
 
+  it.skipIf(!built)('🔴🔴 背景产物里不出现 permissions.request', () => {
+    /*
+     * 两个平台**都**不该有。
+     *
+     * `permissions.request()` 只能从用户手势的调用栈里调用，而背景脚本
+     * 处理 popup 消息不算手势（MDN User actions 页明确列出这条），
+     * 且路径上任何一个 await 都会烧掉手势状态（Bugzilla 1398833）。
+     *
+     * 此方在背景层写过它，症状是用户看到一句「要么在弹窗里允许」，
+     * 而那个弹窗永远不会出现 —— 一个说明了修法却无法执行的错误提示。
+     *
+     * 这条断言在**产物层面**守住那件事：契约里删掉方法只能防住
+     * 「按契约写代码的人」，而直接 `chrome.permissions.request(...)`
+     * 绕过契约是完全可能的（本文件其余断言用的也是这个思路）。
+     */
+    for (const path of [chromiumBundle, firefoxBundle]) {
+      expect(read(path), path).not.toContain('permissions.request')
+    }
+  })
+
+  it.skipIf(!built)('🔴 授权 UI 只进 Firefox 的页面产物', () => {
+    /*
+     * 索权代码在 `options/options.ts` 里，由 `__LOSTPROXY_PLATFORM__`
+     * 包着。Chromium 那趟构建里它应当被完全消除 ——
+     * 一个 Chromium 用户的产物里不该出现 `<all_urls>` 这种字符串，
+     * 哪怕只是死代码：任何审计这个扩展的人（AMO 审核、
+     * 或一个谨慎的用户）看到它都会合理地要求解释。
+     */
+    const chromiumOptions = resolve(ROOT, 'dist', 'options.js')
+    const firefoxOptions = resolve(ROOT, 'dist-firefox', 'options.js')
+    if (!existsSync(chromiumOptions) || !existsSync(firefoxOptions)) return
+
+    expect(read(chromiumOptions)).not.toContain('<all_urls>')
+    expect(read(chromiumOptions)).not.toContain('permissions.request')
+
+    // 反向：Firefox 那边必须真的有，否则这条测试只是在验"两边都没有"。
+    expect(read(firefoxOptions)).toContain('<all_urls>')
+    expect(read(firefoxOptions)).toContain('permissions.request')
+  })
+
   it.skipIf(!built)('两个产物都仍是零 import 的单文件（MV3 约束）', () => {
     /*
      * Chromium 那边这是硬约束：出现 import 会让 service worker 注册失败，

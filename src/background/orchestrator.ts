@@ -37,7 +37,7 @@ import {
 } from './mihomo'
 import { inspectWebRtcPolicy, syncWebRtcLock } from './privacy'
 import {
-  ensureSupported,
+  checkSupported,
   disableProxy,
   enableProxy,
   inspectProxy,
@@ -394,9 +394,12 @@ export async function handleSaveSettings(
    *    把两者混在一起会让一个没授予隐私窗口权限的 Firefox 用户
    *    连端口都改不了 —— 而改端口跟那个权限毫无关系。
    *    这也是此方最初把两件事塞进一个 preflight 时埋下的问题。
+   *
+   * ⚠️ 也**不**在这里索取缺失的权限。那条路走不通（背景脚本拿不到用户手势，
+   *    见 `proxy.ts` 里删掉 `ensureSupported` 的那段说明），索权在设置页做。
    */
   const merged = { ...before, ...patch }
-  const unsupported = await ensureSupported(merged)
+  const unsupported = await checkSupported(merged)
   if (unsupported !== null) {
     return { ok: false, error: unsupported }
   }

@@ -104,10 +104,21 @@ interface FirefoxProxyInfo {
   port?: number
 }
 
-/** `browser.permissions` 的窄声明。 */
+/**
+ * `browser.permissions` 的窄声明。
+ *
+ * 🔴 `onAdded` / `onRemoved` **不是可选的补充**，它们是本平台正确性的一部分。
+ *    MDN 在 `optional_host_permissions` 页明确写着：
+ *      > listen for `permissions.onAdded` and `permissions.onRemoved`
+ *      > to know when a user grants or revokes permissions
+ *    详见 `registerRouter` 里为什么必须挂它们。
+ *
+ * ⚠️ 刻意**不**声明 `request()` —— 它不能从背景脚本调用，见 `requestPermissions`。
+ */
 interface FirefoxPermissionsApi {
   contains(perms: { origins?: string[]; permissions?: string[] }): Promise<boolean>
-  request(perms: { origins?: string[]; permissions?: string[] }): Promise<boolean>
+  onAdded?: { addListener(listener: () => void): void }
+  onRemoved?: { addListener(listener: () => void): void }
 }
 
 interface FirefoxProxySettingsValue {
@@ -309,10 +320,31 @@ export function decideRoute(
 /**
  * 分流监听本体 —— 每个请求被调用一次。
  *
+ * 🔴🔴 **整个函数体必须在一个 try 里。抛出去 = 静默直连。**
+ *
+ * Bugzilla 1528873（Mozilla 标记 **WONTFIX**，认定是预期行为）实测：
+ *   > if the `proxy.onRequest` listener throws an exception, the fetch
+ *   > **proceeds without a proxy** ... Making the listener async ... still
+ *   > lets the fetch happen without a proxy, but **does** call `onError`
+ *
+ * 也就是说这个监听里的任何一次意外抛出，代价都不是"这个请求失败"，
+ * 而是**这个请求裸奔出去**。而末尾那个 `null` 防不住它 ——
+ * `null` 只管"代理地址连不上"，管不了"我们压根没给出答案"。
+ *
+ * 此方最初只把 `readState()` 包进 try，把 `needsRuleBasedRouting` /
+ * `sanitizeRules` / `decideRoute` 留在外面。那三个现在不抛，
+ * 但「现在不抛」不是一个能长期依赖的性质：将来给规则加一种新语法、
+ * 或 `decideRoute` 多一个分支，都可能引入一次抛出 ——
+ * 而它的症状是一次不可见的泄漏，没有任何测试会自然地覆盖到。
+ *
+ * 所以边界画在函数最外层，与"平台层方法可以抛、由共享层归一"那条约定
+ * 在这里刻意不一致：那条约定的前提是调用方能接住，而这里的调用方是
+ * **浏览器**，它接住的方式是放行。
+ *
  * 🔴 **三条 fail-closed 分支，方向都是"拿不准就走代理"：**
  *
  *   1. 还没注入设置读取器（理论上不该发生）→ 走代理
- *   2. 读设置失败 → 走代理
+ *   2. 读设置失败、或任何一步意外抛出 → 走代理
  *   3. 当前配置不需要分流 → 返回 undefined，交给 `proxy.settings` 的全局代理
  *
  * 第 3 条值得说明：返回 `undefined` 意味着"这个监听不表态"，
@@ -327,14 +359,24 @@ export function decideRoute(
 async function routeListener(
   details: FirefoxRequestDetails,
 ): Promise<FirefoxProxyInfo[] | FirefoxProxyInfo | undefined> {
-  if (readState === null) return FALLBACK_PROXIED
-
-  let state: { enabled: boolean; settings: Settings }
   try {
-    state = await readState()
+    return await decideForRequest(details)
   } catch {
+    /*
+     * 兜住一切。见函数头注释 —— 让异常穿出去的后果是这个请求直连，
+     * 而不是失败。返回代理是唯一安全的兜底。
+     */
     return FALLBACK_PROXIED
   }
+}
+
+/** 真正的决策逻辑。允许抛，由 `routeListener` 兜成 fail-closed。 */
+async function decideForRequest(
+  details: FirefoxRequestDetails,
+): Promise<FirefoxProxyInfo[] | FirefoxProxyInfo | undefined> {
+  if (readState === null) return FALLBACK_PROXIED
+
+  const state: { enabled: boolean; settings: Settings } = await readState()
 
   /*
    * 🔴 **开关是关的就完全不表态。**
@@ -388,6 +430,49 @@ export function registerRouter(
 ): void {
   readState = stateReader
 
+  attachRouter()
+
+  /*
+   * 🔴🔴 **授权之后必须重挂 —— Firefox 不会为此重启扩展。**
+   *
+   * 此方原先在这里写「用户授权之后 Firefox 会重启扩展，届时重新注册」。
+   * 那是错的。MDN 在 `optional_host_permissions` 页说的是：
+   *   > listen for `permissions.onAdded` and `permissions.onRemoved`
+   *   > to know when a user grants or revokes permissions
+   *
+   * 按错的假设走会得到这样一条路径：
+   *   1. 扩展启动，还没有 `<all_urls>` → `addListener` 失败（下面接住）
+   *   2. 用户在设置页或 about:addons 授权
+   *   3. 扩展**继续跑着**，监听始终没挂上
+   *   4. 而 `supports()` 现在返回 null，于是代理照常以智能模式开启
+   *   5. **用户的直连清单被静默忽略** —— 全部走代理，页面能开，看不出问题
+   *
+   * 第 5 步正是整个分流设计要防的那件事，从授权这条路漏了进来。
+   *
+   * ⚠️ 它靠事件页空闲卸载、下次唤醒重跑顶层代码**碰巧**会自愈。
+   *    但那是巧合而非设计：用户如果一直在用浏览器（事件页反复被唤醒
+   *    但从不空闲到卸载），或者授权后立刻访问站点，就撞在窗口里。
+   *    依赖巧合的安全性等于没有安全性。
+   *
+   * `onRemoved` 一并挂上：权限被撤销后 `attachRouter` 会摘掉监听，
+   * 免得留一个注册着却收不到请求的空壳 —— 而 `supports()` 届时会
+   * 重新拦住智能模式，两边一致。
+   */
+  const perms = permissionsApi()
+  perms.onAdded?.addListener(attachRouter)
+  perms.onRemoved?.addListener(attachRouter)
+}
+
+/**
+ * 挂上（或重挂）分流监听。可安全重复调用。
+ *
+ * 先 `removeListener` 再 `addListener`：`onAdded` 可能在监听已经挂着时触发
+ * （用户授了另一个不相关的权限），重复 add 同一个函数引用在
+ * WebExtension 事件里是幂等的，但**过滤器不会因此更新**。
+ * 先摘再挂让"权限变了 → 过滤器按新权限重新生效"成为确定行为，
+ * 而不是依赖浏览器对重复注册的处理细节。
+ */
+function attachRouter(): void {
   /*
    * 过滤器必须是主机权限的子集（MDN）。这里用 `<all_urls>`，而它是
    * **可选**权限 —— 用户没授予时 Firefox 会拒绝这次注册（或让监听收不到
@@ -398,6 +483,12 @@ export function registerRouter(
    * 少拦一类就是留一个口子 —— 与 ADR-01 拒绝 `proxyForHttp` 同一个道理。
    */
   try {
+    proxyApi().onRequest?.removeListener(routeListener)
+  } catch {
+    // 没挂过就摘不掉，那是正常的初次调用路径。
+  }
+
+  try {
     proxyApi().onRequest?.addListener(routeListener, { urls: [ALL_URLS] })
   } catch {
     /*
@@ -406,7 +497,7 @@ export function registerRouter(
      * 连本来能正常工作的代理开关一起没了。
      *
      * 失败的代价只是分流不生效，而那条路上 `supports` 会拦住用户
-     * 并说明要给权限。用户授权之后 Firefox 会重启扩展，届时重新注册。
+     * 并说明要给权限。授权之后上面那个 `onAdded` 会把它重挂上。
      */
   }
 }
@@ -439,32 +530,41 @@ function configMatches(
 /**
  * 把 `proxy.onError` 的原始事件转成规范化错误。
  *
- * 🔴 **Firefox 这个事件的信息量比 Chromium 少得多，而且性质不同。**
+ * 🔴🔴 **在 Firefox 上，这个事件触发 ⟺ 已经有一次直连发生了。**
  *
- * MDN：「Fired when there is an error evaluating the PAC file or the
- * onRequest listener.」两点后果：
+ * 所以归一成 `proxyLeakSuspected`，而不是 Chromium 那种按 `fatal` 分流。
+ * 依据是 Bugzilla 1528873，Mozilla 标记 **WONTFIX** 并明确认定这是预期行为：
  *
- *   1. **没有 `fatal` 字段。** 无法区分「请求被拦住了」与「已经直连出去了」。
- *   2. 它**只覆盖 PAC / onRequest 的求值错误**，而不是「代理连不上」。
- *      V0.3 的 Firefox 版走 `proxyType: 'manual'`，既无 PAC 也无 onRequest，
- *      因此这个事件在正常路径上**根本不会触发**。
+ *   > if the `proxy.onRequest` listener throws an exception, the fetch
+ *   > **proceeds without a proxy**, and without calling the `proxy.onError`
+ *   > listener ... Making the listener async; i.e., having it return a
+ *   > rejected promise instead of throw an exception, still lets the fetch
+ *   > happen without a proxy, but **does** call the `proxy.onError` listener.
  *
- * 归一成哪一条：选 `proxyBlocked`（fatal=true 的那条，语义是"请求被拦住、
- * 没有泄漏"）而**不是** `proxyLeakSuspected`。
+ * 我们的 `routeListener` 是 async 的，正好落在后半句：
+ * **请求已经裸奔出去了，然后我们收到这个事件。**
+ * 返回非法 ProxyInfo（端口越界、缺 host）也走同一条路 ——
+ * 同 bug 里逐个实测过，每种都是 `onError` + 照常直连。
  *
- * 此方在这里犹豫过，因为直觉是「信息不足时报更严重的那个」。但那个直觉在
- * 这里是错的，理由具体：`PROXY_LEAK_SUSPECTED` 的设计是**绝不自动消失、
- * 必须由用户显式确认**（ADR-22），因为它记录的是一个已经发生的事实。
- * 用它来表达一个我们**并不知道有没有发生**的泄漏，会训练用户去点掉
- * 这类告警 —— 而一旦养成这个习惯，真正的泄漏告警也会被顺手点掉。
- * 那比这条报得轻要糟得多。
+ * ⚠️ 此方最初写的是 `proxyBlocked`，理由是「信息不足时不要滥用那条
+ *    不可自愈的告警」。那个顾虑本身成立，但**前提是错的** ——
+ *    此方当时假定「Firefox 在 PAC 出错时会拒绝该请求」，
+ *    而 Mozilla 在上面那条 bug 里说的恰好相反。
  *
- * 所以取向是：报一条可自愈、可操作的告警，并在文案上不做任何"没有泄漏"的
- * 承诺（`error.proxyBlocked` 的现有文案说的是"该请求已被阻止"——
- * 对 PAC 求值失败而言这是准确的，Firefox 在 PAC 出错时的行为是拒绝该请求）。
+ *    更要紧的是文案：`error.proxyBlocked` 明写「你的真实 IP **没有泄漏**
+ *    —— 该请求已被阻止」。在这条路径上那句话是**假的**，
+ *    而它恰好是全项目唯一绝不能说错的一句。宁可让用户多确认一次告警，
+ *    也不能替浏览器承诺一个它没做到的保证。
+ *
+ * 因此这里付出的代价是明知的：`PROXY_LEAK_SUSPECTED` 不自愈（ADR-22），
+ * 必须由用户显式 Dismiss。那正是"已经发生过的事实"该有的形态。
+ *
+ * ⚠️ 与 Chromium 的差异不只是取值，而是**能得出的结论强度**：
+ *    那边 `fatal` 字段真能区分「拦住了」与「漏了」，这边不能 ——
+ *    因为这边只有一种情况会触发，而它就是漏了。
  */
 export function normalizeProxyError(_error: unknown): NormalizedError {
-  return errors.proxyBlocked()
+  return errors.proxyLeakSuspected()
 }
 
 // ---------------------------------------------------------------------------
@@ -512,25 +612,11 @@ export const firefox: BrowserPlatform = {
     }
   },
 
-  /**
-   * 索取分流所需的可选权限。
-   *
-   * ⚠️ 必须在用户手势的调用栈里 —— Firefox 无手势时直接拒绝。
-   *    调用点在 `orchestrator` 处理 SAVE_SETTINGS / ENABLE 消息时，
-   *    而那两条消息都由用户点击发出，所以手势成立。
-   *
-   * 不需要分流的配置直接返回 true：不该为了一个用不到的功能弹窗。
+  /*
+   * ⚠️ 这里没有 `requestPermissions` —— 见 `types.ts` 里那段说明。
+   *    `permissions.request()` 无法从背景脚本调用，索权只能发生在
+   *    设置页的点击回调里（`options/options.ts`）。
    */
-  async requestPermissions(settings: Settings): Promise<boolean> {
-    if (!needsRuleBasedRouting(settings)) return true
-
-    try {
-      return await permissionsApi().request({ origins: [ALL_URLS] })
-    } catch {
-      // 弹窗被拒、或 API 不存在 —— 两种都当作"没拿到"。
-      return false
-    }
-  },
 
   /**
    * 隐私窗口访问权。

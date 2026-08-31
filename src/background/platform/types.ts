@@ -184,21 +184,38 @@ export interface BrowserPlatform {
    */
   supports(settings: Settings): Promise<PlatformBlocker | null>
 
-  /**
-   * 尝试获得这份配置所需的可选权限。返回是否已具备。
+  /*
+   * ⚠️⚠️ **这里刻意没有 `requestPermissions`。别加回来。**
    *
-   * 🔴 **必须由用户手势触发**（点击事件的调用栈里）。
-   *   Firefox 的 `permissions.request()` 在没有用户手势时直接拒绝 ——
-   *   所以这个方法只能从「用户点了开关/切了模式」这条路径上调，
-   *   不能放进 `reconcile()` 之类的后台流程里。
+   * 此方写过一个 `requestPermissions(settings): Promise<boolean>`，
+   * 由 orchestrator 在处理 SAVE_SETTINGS / ENABLE 时调用，注释里写着
+   * 「那两条消息都由用户点击发出，所以手势成立」。
    *
-   * 与 `supports` 分开而不是让它自己去要权限：`supports` 会在
-   * 保存设置、开启代理、渲染状态等多处被调用，其中大部分**不是**用户手势，
-   * 而一个会弹窗的查询函数在那些地方是灾难。查询与索取必须分开。
+   * **那句话是错的**，而且错得很彻底 —— Firefox 有两道互相独立的拦截：
    *
-   * 没有可选权限概念的平台（Chromium）直接返回 true。
+   *   1. MDN：「The extension can only make the request inside the handler
+   *      for a **user action**」。而 MDN 的 User actions 页明确排除了这条路：
+   *      「the background page message handler is **not** considered to be
+   *      handling a user action」。popup 的点击不会跨消息传递过去。
+   *
+   *   2. 即便在正确的地方，MDN 还说：「if a user input handler **waits on a
+   *      promise**, then its status as a user input handler is **lost**」。
+   *      背景层这条路上有 `await getSettings()` 与 `await supports()`，
+   *      任何一个都会把手势烧掉（Bugzilla 1398833 里 Mozilla 明确表示
+   *      不打算像 Chromium 那样跨 await 传递手势标记）。
+   *
+   * 症状极其隐蔽：`request()` 抛错 → 被 catch 吞成 false →
+   * 用户看到一句「要么在弹窗里允许」，而那个弹窗**永远不会出现**。
+   * 一个说明了修法却无法执行的错误提示，比不给提示更糟。
+   *
+   * 所以索取权限这件事整个**不属于平台契约** —— 它只能发生在
+   * UI 页面的点击回调里，且回调内在 `request()` 之前不能有任何 `await`。
+   * 实现在 `options/options.ts`，那里有完整说明。
+   *
+   * 契约里不留这个方法，是让「不可能从背景层索权」这件事变成
+   * **类型层面的事实**而不是一句会被忽略的注释：没有这个方法，
+   * 就没有人能从背景层调它。
    */
-  requestPermissions(settings: Settings): Promise<boolean>
 
   /**
    * **现在**能不能写。返回 `null` 表示能。

@@ -715,6 +715,30 @@ select.control {
   overflow: hidden;
 }
 
+/* ---------- Firefox 专属：逐请求判断授权 ---------- */
+
+/*
+ * 只在 Firefox 构建里显示（options.ts 按 __LOSTPROXY_PLATFORM__ 揭开 hidden）。
+ * 用一条上边框与规则输入框分隔 —— 它解释的是"为什么这个浏览器要多一步"，
+ * 与规则本身是两件事，视觉上不该连成一片。
+ */
+.routing-perm {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--stroke);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.routing-perm__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
 .control--area {
   min-height: 120px;
   padding: 10px 12px;

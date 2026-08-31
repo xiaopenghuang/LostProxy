@@ -47,6 +47,155 @@ const el = {
   subsResult: document.querySelector<HTMLElement>('#subs-result'),
   probePort: document.querySelector<HTMLButtonElement>('#probe-port'),
   saveBar: document.querySelector<HTMLElement>('#save-bar'),
+  routingPerm: document.querySelector<HTMLElement>('#routing-perm'),
+  grantRoutingPerm: document.querySelector<HTMLButtonElement>('#grant-routing-perm'),
+  routingPermResult: document.querySelector<HTMLElement>('#routing-perm-result'),
+}
+
+// ---------------------------------------------------------------------------
+// 🔴🔴 Firefox：逐请求判断所需的可选权限
+// ---------------------------------------------------------------------------
+
+/** 构建期注入的平台标识（见 `vite.shared.ts`）。 */
+declare const __LOSTPROXY_PLATFORM__: 'chromium' | 'firefox'
+
+/**
+ * 智能分流需要的可选主机权限。与 `platform/firefox.ts` 里的同名常量一致。
+ *
+ * ⚠️ 刻意**不**从那个模块 import：那是背景层的平台实现，
+ *    UI 页面把它拉进来会连带 `chrome.proxy` 的整套调用一起打进 popup/options
+ *    的 bundle。两处各写一遍这个字符串的代价是可控的（一个 W3C 规定的
+ *    固定字面量，不会变），而模块边界的价值更大。
+ */
+const ALL_URLS = '<all_urls>'
+
+/**
+ * 🔴🔴 **这一整段是本文件唯一直接调用浏览器 API 的地方，而它是被迫的。**
+ *
+ * 本项目的规矩是「UI 只渲染、只发消息」（技术方案 §29.12），
+ * 而这里破了例。原因是 Firefox 的两道硬约束叠在一起，把索取权限这件事
+ * **锁死在了 UI 的点击回调里**：
+ *
+ *   1. MDN：「The extension can only make the request inside the handler
+ *      for a **user action**」。而 MDN 的 User actions 页明确排除了
+ *      经由消息传递的那条路：「the background page message handler is
+ *      **not** considered to be handling a user action」。
+ *
+ *   2. MDN：「if a user input handler **waits on a promise**, then its status
+ *      as a user input handler is **lost**」。Bugzilla 1398833 里 Mozilla
+ *      明确表示不打算像 Chromium 那样跨 await 传递手势标记。
+ *
+ * 此方第一版把它放在背景层（`platform.requestPermissions`），
+ * 由 orchestrator 在处理 SAVE_SETTINGS 时调用，同时撞上了这两条 ——
+ * 症状是用户看到一句「要么在弹窗里允许」，而那个弹窗**永远不会出现**。
+ *
+ * 所以这段代码的位置不是风格选择，是**唯一可行的位置**。
+ *
+ * ## 为什么在设置页而不是 popup
+ *
+ * Firefox 的授权 doorhanger 从 popup 触发时会出现在 popup **背后**、
+ * 点不到（Bugzilla 1798454，Firefox 108 起，**至今仍是 NEW**）。
+ * 常见的绕法是「request 之后立刻 window.close()」，但那是拿一个未修复的
+ * 平台 bug 的副作用当作实现依赖 —— 它哪天修了，绕法可能反而出问题。
+ *
+ * 设置页是独立标签页（`options_ui.open_in_tab: true`），
+ * doorhanger 正常锚定到工具栏。多一步跳转，换掉一整类不可控。
+ *
+ * ## Chromium 上这段代码不存在
+ *
+ * `__LOSTPROXY_PLATFORM__` 是构建期常量，所以下面那个 if 在 Chromium 构建里
+ * 是 `if (false)`，整段被死代码消除。这不只是省几行：它让
+ * 「Chromium 产物里不出现 `<all_urls>`」成为一条可断言的事实。
+ */
+function setupRoutingPermission(): void {
+  if (__LOSTPROXY_PLATFORM__ !== 'firefox') return
+
+  const section = el.routingPerm
+  const button = el.grantRoutingPerm
+  if (section === null || button === null) return
+
+  section.hidden = false
+
+  /*
+   * 先查一次当前状态，把结果显示出来。
+   *
+   * `permissions.contains()` **不需要**用户手势（Bugzilla 1398833 里
+   * Mozilla 原话：「The `contains` method can unconditionally be called」），
+   * 所以在这里 await 它是安全的 —— 关键是它**不在点击回调里**。
+   */
+  void refreshRoutingPermissionState()
+
+  button.addEventListener('click', () => {
+    /*
+     * 🔴🔴 **这个回调里 `request()` 之前不能有任何 `await`。**
+     *
+     * 不是"最好不要"，是"有了就一定失败"：第一个 await 会让这个回调
+     * 失去 user-input-handler 身份，`request()` 随即抛
+     * "may only be called from a user input handler"。
+     *
+     * 所以刻意**不**先查 `contains()` —— 那正是 Bugzilla 1398833 的标题
+     * 所描述的陷阱。而且没必要：Mozilla 在同一条 bug 里说
+     * 「`request()` will just quietly return true if you request a
+     * permission you already have」。
+     *
+     * 同理这个回调**不能声明成 async 再 await request()** —— 那样写
+     * 调用本身仍在同步栈上，是可以的，但为了让"不许在前面 await"
+     * 这条约束在阅读时无从误解，这里写成同步回调 + `.then()`。
+     */
+    const requesting = (
+      chrome as unknown as {
+        permissions: { request(p: { origins: string[] }): Promise<boolean> }
+      }
+    ).permissions.request({ origins: [ALL_URLS] })
+
+    button.disabled = true
+
+    requesting
+      .then((granted) => {
+        /*
+         * 授权成功后**不需要**通知背景层重挂分流监听 ——
+         * 它自己监听着 `permissions.onAdded`（见 `platform/firefox.ts`）。
+         * 从这里再发一条消息只会多一条可能不一致的路径。
+         */
+        setRoutingPermResult(granted ? 'options.routingPermGranted' : 'options.routingPermDenied')
+      })
+      .catch(() => {
+        // 抛错等同于没拿到。真机上最可能的原因是手势丢失 ——
+        // 而那意味着上面那条约束被破坏了，属于代码 bug 而非用户操作。
+        setRoutingPermResult('options.routingPermDenied')
+      })
+      .finally(() => {
+        button.disabled = false
+      })
+  })
+}
+
+/** 查询并显示当前授权状态。可以 await —— 它不在点击回调里。 */
+async function refreshRoutingPermissionState(): Promise<void> {
+  try {
+    const granted = await (
+      chrome as unknown as {
+        permissions: { contains(p: { origins: string[] }): Promise<boolean> }
+      }
+    ).permissions.contains({ origins: [ALL_URLS] })
+
+    setRoutingPermResult(granted ? 'options.routingPermGranted' : 'options.routingPermMissing')
+  } catch {
+    // 查不出来就按"没授权"显示：多提示一次的代价远小于让用户以为已经有了。
+    setRoutingPermResult('options.routingPermMissing')
+  }
+}
+
+/** 当前显示的授权状态文案键。语言切换时要用它重绘。 */
+let routingPermKey: MessageKey | null = null
+
+function setRoutingPermResult(key: MessageKey): void {
+  routingPermKey = key
+  if (el.routingPermResult) {
+    // 授权成功那条后面附上「怎么收回」—— 一个能撤销的授权才是真的可选。
+    const revoke = key === 'options.routingPermGranted' ? ` ${t('options.routingPermRevoke')}` : ''
+    el.routingPermResult.textContent = `${t(key)}${revoke}`
+  }
 }
 
 /**
@@ -158,6 +307,13 @@ function renderSettings(view: SettingsView): void {
         ? t('options.rulesCount', { count: view.directRules.length })
         : t('options.rulesNeedRules')
   }
+
+  /*
+   * 语言可能刚被用户切过，而授权状态文案是动态写进去的，
+   * `applyStaticText()` 不会碰它 —— 得在这里按新语言重绘一次。
+   * 漏了的表现是「界面全变了，只有这一行还是旧语言」。
+   */
+  if (routingPermKey !== null) setRoutingPermResult(routingPermKey)
 
   // 刚加载完（或刚保存完）必然是干净状态。
   refreshDirtyState()
@@ -551,4 +707,12 @@ el.form?.addEventListener('change', refreshDirtyState)
 // 先用浏览器语言把静态文案填上，避免加载期间一片空白。
 applyStaticText()
 renderLanguageOptions('auto')
+
+/*
+ * Firefox 专属的授权区块。放在 `load()` 之前是刻意的：
+ * 它不依赖任何设置，而 `load()` 要等一次消息往返 ——
+ * 让一个能立刻显示的区块去等它没有道理。
+ */
+setupRoutingPermission()
+
 void load()

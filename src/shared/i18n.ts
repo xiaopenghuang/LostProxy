@@ -151,7 +151,7 @@ const EN = {
   'error.privateBrowsingAccessRequired':
     'Firefox will not let LostProxy change proxy settings until you allow it to run in private windows. Open about:addons, click LostProxy, and turn on "Run in Private Windows". Proxy settings apply to private and normal windows alike, which is why Firefox asks first.',
   'error.routingPermissionRequired':
-    'Smart routing needs permission to see which sites you visit. Firefox has no inline PAC support, so LostProxy has to decide per request — which means the browser asks it about every URL. Without that permission your direct-connection list would be silently ignored, so LostProxy will not enable instead. Either allow it when asked, or put those rules in your Mihomo config — the core handles them better anyway.',
+    'Smart routing needs permission to see which sites you visit. Firefox has no inline PAC support, so LostProxy has to decide per request — which means the browser asks it about every URL. Without that permission your direct-connection list would be silently ignored, so LostProxy refuses to enable instead. Open Settings and click "Allow per-request routing", or put those rules in your Mihomo config — the core handles them better anyway.',
   'error.proxyBlocked':
     'Cannot reach the local proxy. Your real IP was not exposed — the request was blocked. Check that Mihomo is running and that its mixed-port matches the proxy address shown above.',
   'error.proxyLeakSuspected':
@@ -223,6 +223,20 @@ const EN = {
   'options.rulesPlaceholder': '*.edu.cn\n*.cnki.net\nlib.example.edu',
   'options.rulesCount': '{count} rule(s) saved.',
   'options.rulesNeedRules': 'Smart mode needs at least one rule; the mode falls back to Global.',
+  /*
+   * Firefox 独有的授权区块。文案的责任是解释**为什么这里要多一步**——
+   * 用户在 Edge 上用过同一个功能而不需要授权，不解释就会显得我们在乱要权限。
+   */
+  'options.routingPermTitle': 'Per-request Permission (Firefox)',
+  'options.routingPermHint':
+    'Firefox has no inline PAC support, so LostProxy decides per request — which means the browser asks it about every URL, and that needs the "Access your data for all websites" permission. Chromium browsers run the rules inside their own sandbox, so they do not ask.',
+  'options.routingPermGrant': 'Allow per-request routing',
+  'options.routingPermGranted': 'Granted. Smart mode is available.',
+  'options.routingPermMissing': 'Not granted yet. Smart mode will fall back to refusing to enable.',
+  'options.routingPermDenied':
+    'Permission was not granted. You can click again, or put those rules in your Mihomo config instead — the core handles them better anyway.',
+  'options.routingPermRevoke':
+    'To revoke it later: about:addons → LostProxy → Permissions.',
   /*
    * 注入被拒时的文案刻意说明「哪一条」和「为什么」——
    * 只说"格式错误"会让用户反复试而不知道问题在哪。
@@ -388,7 +402,7 @@ const ZH: Record<MessageKey, string> = {
   'error.privateBrowsingAccessRequired':
     'Firefox 不允许 LostProxy 修改代理设置，除非你允许它在隐私窗口中运行。打开 about:addons，点开 LostProxy，把「在隐私窗口中运行」打开。代理设置对隐私窗口和普通窗口同时生效，所以 Firefox 会先问一次。',
   'error.routingPermissionRequired':
-    '智能分流需要「访问所有网站」的权限。Firefox 不支持内联 PAC 脚本，所以分流必须由 LostProxy 逐个请求判断 —— 也就是浏览器会把每个网址问一遍。没有这个权限，你的直连清单会被无声忽略，所以 LostProxy 选择不开启。要么在弹窗里允许，要么把这些规则写进 Mihomo 配置 —— 内核本来就比浏览器更擅长做这件事。',
+    '智能分流需要「访问所有网站」的权限。Firefox 不支持内联 PAC 脚本，所以分流必须由 LostProxy 逐个请求判断 —— 也就是浏览器会把每个网址问一遍。没有这个权限，你的直连清单会被无声忽略，所以 LostProxy 选择不开启。请到设置页点「允许逐请求判断」，或者把这些规则写进 Mihomo 配置 —— 内核本来就比浏览器更擅长做这件事。',
   'error.proxyBlocked':
     '连不上本机代理。你的真实 IP 没有泄漏 —— 该请求已被阻止。请确认 Mihomo 正在运行，且它的混合端口与上面显示的代理地址一致。',
   'error.proxyLeakSuspected':
@@ -451,6 +465,15 @@ const ZH: Record<MessageKey, string> = {
   'options.rulesLabel': '直连清单',
   'options.rulesPlaceholder': '*.edu.cn\n*.cnki.net\nlib.example.edu',
   'options.rulesCount': '已保存 {count} 条规则。',
+  'options.routingPermTitle': '逐请求判断权限（Firefox）',
+  'options.routingPermHint':
+    'Firefox 不支持内联 PAC 脚本，所以智能分流必须由 LostProxy 逐个请求判断 —— 也就是浏览器会把每个网址问一遍，这需要「访问所有网站的数据」权限。Chromium 系浏览器把规则放在自己的沙箱里跑，所以不用问。',
+  'options.routingPermGrant': '允许逐请求判断',
+  'options.routingPermGranted': '已授权，智能分流可用。',
+  'options.routingPermMissing': '尚未授权。此时选择智能分流会导致代理拒绝开启。',
+  'options.routingPermDenied':
+    '没有拿到授权。可以再点一次，或者把这些规则写进 Mihomo 配置 —— 内核本来就比浏览器更擅长做这件事。',
+  'options.routingPermRevoke': '想收回的话：about:addons → LostProxy → 权限。',
   'options.rulesNeedRules': '智能分流至少需要一条规则，否则会退回全局模式。',
   'validation.ruleInvalidChar':
     '规则「{rule}」含有不允许的字符。只能用字母、数字、点、连字符和 *。',

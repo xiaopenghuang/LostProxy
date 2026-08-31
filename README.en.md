@@ -11,7 +11,7 @@
 ![Manifest](https://img.shields.io/badge/Manifest-V3-4285F4?logo=googlechrome&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8%20(Rolldown)-646CFF?logo=vite&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-1047%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1076%20passing-brightgreen)
 
 [![Release](https://img.shields.io/github/v/release/xiaopenghuang/LostProxy?label=download&color=success)](https://github.com/xiaopenghuang/LostProxy/releases/latest)
 
@@ -228,7 +228,7 @@ namespace).
 | Extension platform | Manifest V3 (`proxy` + `storage` + `privacy` permissions) |
 | Language | TypeScript 7 (native/Go compiler) |
 | Build | Vite 8 (Rolldown), hand-written config, two output passes |
-| Tests | Vitest 4, 1047 tests, hand-written `chrome.*` mocks |
+| Tests | Vitest 4, 1076 tests, hand-written `chrome.*` mocks |
 | UI | Plain HTML/CSS, no UI framework; Fluent Design visual language |
 | i18n | Hand-rolled; the EN dictionary is the single source of truth, so a missing translation is a compile error |
 
@@ -253,7 +253,7 @@ src/
   shared/       types / constants / errors / i18n / messages
   manifest.json         Chromium (service_worker)
   manifest.firefox.json Firefox (scripts + gecko id)
-tests/          1047 unit tests and two sets of chrome API mocks
+tests/          1076 unit tests and two sets of chrome API mocks
 scripts/        packaging, release notes, icon generation
 ```
 
@@ -277,7 +277,7 @@ throws, so nobody can quietly start writing to it later.
 ## Tests
 
 ```bash
-npm run test        # 1047 tests, ~0.5s
+npm run test        # 1076 tests, ~0.5s
 npm run verify      # typecheck + test + build
 ```
 
@@ -340,8 +340,17 @@ Firefox's proxy API has no inline PAC support, so routing goes through
 whether to proxy it. That means the extension can see every URL you visit — which
 is why Firefox insists on asking first.
 
-The prompt appears the first time you switch routing to Smart. Decline and global
-proxying keeps working; accept and you can revoke it any time in `about:addons`.
+You grant it from **Settings → Direct-connect Rules → "Allow per-request
+routing"**. Decline and global proxying keeps working; accept and you can revoke
+it any time in `about:addons`.
+
+> **Why a button in Settings rather than a prompt when you pick Smart**: Firefox
+> only allows `permissions.request()` from a real user-input handler, and a
+> background message handler is explicitly not one — nor does the gesture survive
+> an `await`. Requesting from the popup hits a separate open Firefox bug where the
+> permission doorhanger renders *behind* the popup and cannot be clicked
+> (Bugzilla 1798454). The Settings page is a normal tab, so the doorhanger anchors
+> where you expect it.
 
 > **Why not request it at install time**: needing only `http://127.0.0.1/*` by
 > default is a feature of this project — a small permission surface means a

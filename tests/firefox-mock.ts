@@ -182,6 +182,37 @@ export function clearFirefoxRequestListeners(): void {
 /** 设为 false 模拟 `proxy.onRequest` 不可用（没拿到 `<all_urls>`）。 */
 export const ffOnRequestPresent = { value: true }
 
+/** `permissions.onAdded` / `onRemoved` 上挂着的监听。 */
+const permissionListeners: { added: Array<() => void>; removed: Array<() => void> } = {
+  added: [],
+  removed: [],
+}
+
+/**
+ * 模拟用户在设置页或 about:addons 里**授予**了权限。
+ *
+ * 同时改 `granted` 与触发事件 —— 真机上这两件事是一起发生的，
+ * 拆开会让测试能通过一个现实中不存在的状态组合。
+ */
+export function grantFirefoxPermission(): void {
+  ffPermissions.granted = true
+  for (const listener of permissionListeners.added) listener()
+}
+
+/** 模拟用户**撤销**了权限（about:addons 的权限页）。 */
+export function revokeFirefoxPermission(): void {
+  ffPermissions.granted = false
+  for (const listener of permissionListeners.removed) listener()
+}
+
+/** 有没有挂上权限变更监听。用于验「授权后会重挂分流监听」这条路存在。 */
+export function ffPermissionListenerCounts(): { added: number; removed: number } {
+  return { added: permissionListeners.added.length, removed: permissionListeners.removed.length }
+}
+
+/** 模拟这两个事件 API 不存在（旧版 Firefox / 权限没声明）。 */
+export const ffPermissionEventsPresent = { value: true }
+
 /**
  * 模拟浏览器对一个 URL 询问「走代理还是直连」。
  *
@@ -238,6 +269,9 @@ export const ffOnErrorPresent = { value: true }
 export function installFirefoxMock(): void {
   errorListeners = []
   requestListeners = []
+  permissionListeners.added = []
+  permissionListeners.removed = []
+  ffPermissionEventsPresent.value = true
   Object.assign(ffProxySetting, freshMock<FirefoxProxyValue>())
   Object.assign(ffWebRtcSetting, freshMock<string>())
   ffIncognito.allowed = true
@@ -327,6 +361,17 @@ export function installFirefoxMock(): void {
         }
         return ffPermissions.granted
       },
+      /*
+       * ⚠️ 刻意保留 `request`，尽管平台层已经不该调它了。
+       *
+       * 留着它才能验「平台层**没有**调用 request」这条断言 ——
+       * 若 mock 里根本没这个方法，那条断言会因为"方法不存在"
+       * 而非"没被调用"通过，等于没测。`requestCalls` 是那条测试的判据。
+       *
+       * 真机上这个调用在背景脚本里会抛
+       * "may only be called from a user input handler"，
+       * 而 mock 无法模拟手势，所以这里的实现只是让计数器动起来。
+       */
       request: async (): Promise<boolean> => {
         ffPermissions.requestCalls += 1
         if (ffPermissions.failNextRequest) {
@@ -337,6 +382,35 @@ export function installFirefoxMock(): void {
         // 真实行为：用户同意后权限就真的有了。
         if (ffPermissions.willGrant) ffPermissions.granted = true
         return ffPermissions.willGrant
+      },
+      /*
+       * 🔴 `onAdded` / `onRemoved` —— 用户授权/撤销时 Firefox 通知扩展的唯一途径。
+       *
+       * MDN（optional_host_permissions 页）：
+       *   > listen for `permissions.onAdded` and `permissions.onRemoved`
+       *   > to know when a user grants or revokes permissions
+       *
+       * 建模它们是必需的，因为没有它们就测不出此方犯过的那个错：
+       * 原先的代码假定"授权后 Firefox 会重启扩展"，于是授权之后
+       * 分流监听永远挂不上，而用户的直连清单被静默忽略。
+       */
+      get onAdded() {
+        return ffPermissionEventsPresent.value
+          ? {
+              addListener: (listener: () => void): void => {
+                permissionListeners.added.push(listener)
+              },
+            }
+          : undefined
+      },
+      get onRemoved() {
+        return ffPermissionEventsPresent.value
+          ? {
+              addListener: (listener: () => void): void => {
+                permissionListeners.removed.push(listener)
+              },
+            }
+          : undefined
       },
     },
   }

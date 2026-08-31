@@ -50,10 +50,13 @@ vi.mock('../src/background/platform', async () => {
     async supports(settings: Settings): Promise<PlatformBlocker | null> {
       return needsRuleBasedRouting(settings) ? 'routingPermissionRequired' : null
     },
-    // 假平台里用户始终**拒绝**授权 —— 本文件验的是被拒之后的行为。
-    async requestPermissions(): Promise<boolean> {
-      return false
-    },
+    /*
+     * ⚠️ 刻意**没有** requestPermissions。它已从契约里删除 ——
+     *    背景层拿不到用户手势，索权只能在设置页做
+     *    （见 platform/types.ts 那段说明）。
+     *    本文件验的是"缺权限时编排层怎么反应"，而正确反应是**干净地拒绝**，
+     *    不是尝试去要。
+     */
   }
 
   return { platform: refusing }

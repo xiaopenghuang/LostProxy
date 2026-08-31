@@ -11,7 +11,7 @@
 ![Manifest](https://img.shields.io/badge/Manifest-V3-4285F4?logo=googlechrome&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8%20(Rolldown)-646CFF?logo=vite&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-1047%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1076%20passing-brightgreen)
 
 [![Release](https://img.shields.io/github/v/release/xiaopenghuang/LostProxy?label=download&color=success)](https://github.com/xiaopenghuang/LostProxy/releases/latest)
 
@@ -202,7 +202,7 @@ npm run build
 | 扩展平台 | Manifest V3（`proxy` + `storage` + `privacy` 权限） |
 | 语言 | TypeScript 7（native/Go 编译器） |
 | 构建 | Vite 8（Rolldown），手写配置，两趟输出 |
-| 测试 | Vitest 4，1047 项，含 `chrome.*` 手写 mock |
+| 测试 | Vitest 4，1076 项，含 `chrome.*` 手写 mock |
 | 界面 | 原生 HTML/CSS，无 UI 框架；Fluent Design 视觉语言 |
 | i18n | 自实现，EN 词典为单一真源，缺翻译是编译期错误 |
 
@@ -227,7 +227,7 @@ src/
   shared/       types / constants / errors / i18n / messages
   manifest.json         Chromium（service_worker）
   manifest.firefox.json Firefox（scripts + gecko id）
-tests/          1047 项单元测试与两套 chrome API mock
+tests/          1076 项单元测试与两套 chrome API mock
 scripts/        打包、发布说明、图标生成
 ```
 
@@ -249,7 +249,7 @@ storage 重读。业务决策不散落在 `proxy.ts` 里，集中在 `orchestrat
 ## 测试
 
 ```bash
-npm run test        # 1047 项，约 0.5s
+npm run test        # 1076 项，约 0.5s
 npm run verify      # typecheck + test + build
 ```
 
@@ -302,8 +302,14 @@ Firefox 的代理 API 不支持内联 PAC 脚本，所以分流走的是另一�
 （`proxy.onRequest`）：浏览器对**每个请求**问扩展一次「走代理还是直连」。
 这意味着扩展能看到你访问的每一个网址 —— 所以 Firefox 必须先征得你同意。
 
-第一次把分流模式切成「智能」时会弹一次授权请求。不给就继续用全局代理，
+授权入口在**设置页 → 直连规则 → 「允许逐请求判断」**。不给就继续用全局代理，
 给了之后随时能在 `about:addons` 里收回。
+
+> **为什么是设置页上一个按钮，而不是切到「智能」时弹窗**：Firefox 只允许
+> `permissions.request()` 从真正的用户输入回调里调用，而背景脚本处理消息
+> 明确不算，手势也活不过一次 `await`。从 popup 里请求则会撞上另一个仍未修复的
+> Firefox bug —— 授权弹窗会出现在 popup **背后**且点不到（Bugzilla 1798454）。
+> 设置页是普通标签页，弹窗会正常出现在你预期的位置。
 
 > **为什么不在安装时一次要掉**：默认只要 `http://127.0.0.1/*` 本身是这个项目的
 > 一项卖点 —— 权限面小意味着即便扩展被攻破，能拿到的东西也有限。

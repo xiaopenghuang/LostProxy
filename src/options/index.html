@@ -227,6 +227,31 @@
                   ></textarea>
                 </div>
                 <p class="hint hint--tight" id="rules-result"></p>
+
+                <!--
+                  Firefox 专属：逐请求判断所需的可选权限。
+
+                  默认 hidden，只有 Firefox 构建会显示（options.ts 里按
+                  __LOSTPROXY_PLATFORM__ 判断）。Chromium 上整段代码会被
+                  死代码消除，这个节点也永远不显示。
+
+                  🔴 为什么授权按钮必须在**这一页**而不是 popup：
+                    Firefox 的授权弹窗（doorhanger）从 popup 触发时会出现在
+                    popup **背后**且点不到（Bugzilla 1798454，至今仍是 NEW）。
+                    设置页是独立标签页（options_ui.open_in_tab），
+                    doorhanger 正常锚定到工具栏。
+                -->
+                <div id="routing-perm" class="routing-perm" hidden>
+                  <p class="routing-perm__title" data-i18n="options.routingPermTitle"></p>
+                  <p class="hint" data-i18n="options.routingPermHint"></p>
+                  <button
+                    type="button"
+                    id="grant-routing-perm"
+                    class="btn btn--secondary"
+                    data-i18n="options.routingPermGrant"
+                  ></button>
+                  <p class="hint hint--tight" id="routing-perm-result"></p>
+                </div>
               </div>
             </section>
           </div>
