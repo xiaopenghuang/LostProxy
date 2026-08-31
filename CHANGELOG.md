@@ -59,8 +59,8 @@ Firefox support. All business logic and UI shared; browser differences confined 
 ### 尚未完成 / Not yet done
 
 - **Firefox 真机隔离测试。** 目前只有单元测试覆盖，`docs/test-plan.md` §6.5 列了 10 项
-  只有真机能验的检查，其中出口 IP 隔离与 fail-closed 两项决定这个移植是否真的成立。
-  Chromium 侧的 18/18 验收不自动适用于 Firefox。
+  只有真机能验的检查，其中 X0b（装了的走代理、没装的不走）与 X3（停掉内核后不静默直连）
+  两项决定这个移植是否真的成立。Chromium 侧的 18/18 验收不自动适用于 Firefox。
   **Real-machine egress isolation on Firefox is unverified** — a known open item, not a guarantee.
 
 ---
