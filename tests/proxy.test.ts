@@ -1,80 +1,46 @@
 /**
- * proxy 层单元测试。
+ * 代理**决策层**单元测试。
  *
- * 本文件的价值不在于覆盖率，而在于把 architecture.md 里的**安全约束**
+ * 本文件的价值不在于覆盖率，而在于把 architecture.md 里的**安全决策**
  * 变成可执行断言。以下几条如果退化，项目的核心价值就没了，
  * 而它们全都是「不会报错、只会静默泄漏」的那种退化：
  *
- *   - 必须用 singleProxy（用 proxyForHttp 会给其他协议留直连口子）
- *   - bypassList 必须含 127.0.0.1 与 [::1]（<local> 不覆盖 IP 字面量）
- *   - scope 必须是 regular（regular_only 会让 InPrivate 窗口漏出去）
- *   - 关闭必须用 clear()（set(direct) 会越权强制全局直连）
- *   - fatal=false 的 proxy error 必须被识别为「已经直连过」
- *   - enableProxy 绝不能依赖 Core 可用性（fail-closed）
+ *   - 被别的扩展 / Policy 控制时**拒绝写入**（不显示假 ON）
+ *   - 查询失败（unknown）**不阻断**写入（放弃写入的代价是泄漏）
+ *   - 关闭必须用「释放控制权」而非「强制直连」（ADR-18）
+ *   - enableProxy 绝不能依赖 Core 可用性（ADR-03 fail-closed）
+ *
+ * ## 与 platform-chromium.test.ts 的分工
+ *
+ * 判据只有一条，且是可操作的：
+ *
+ *   **移植到 Firefox 时这条断言需要改吗？需要 → 那边；不需要 → 这里。**
+ *
+ * 所以本文件里**没有**任何断言涉及 `fixed_servers` / `singleProxy` /
+ * `bypassList` / `scope: 'regular'` / `fatal` 字段 —— 那些形状与值都是
+ * Chromium 特有的，住在 `platform-chromium.test.ts`（ADR-36）。
+ *
+ * 本文件断言的是与浏览器无关的**策略**。接 Firefox 时这些断言应当一条都不用改；
+ * 若发现需要改，说明平台边界划错了，那是个该停下来的信号。
+ *
+ * ⚠️ 测试用的 `chrome.*` mock 本身当然是 Chromium 形状的（`tests/setup.ts`）——
+ *    目前只有一个平台实现，没有别的选择。这不削弱上面的分工：
+ *    判据看的是**断言**在说什么，不是它经由哪套 mock 到达。
  */
 
 import { describe, expect, it } from 'vitest'
 import {
-  buildProxyConfig,
   disableProxy,
   enableProxy,
   inspectProxy,
   isBlockedByControl,
-  normalizeProxyError,
   registerProxyErrorListener,
 } from '../src/background/proxy'
-import { DEFAULT_SETTINGS, PROXY_BYPASS_LIST } from '../src/shared/constants'
-import type { NormalizedError, Settings } from '../src/shared/types'
-import { emitProxyError, proxyErrorListenerCount, proxySetting } from './setup'
+import { DEFAULT_SETTINGS } from '../src/shared/constants'
+import type { Settings } from '../src/shared/types'
+import { proxyErrorListenerCount, proxySetting } from './setup'
 
 const settings: Settings = { ...DEFAULT_SETTINGS, proxyHost: '127.0.0.1', proxyPort: 7890 }
-
-describe('buildProxyConfig', () => {
-  it('uses fixed_servers mode', () => {
-    expect(buildProxyConfig(settings).mode).toBe('fixed_servers')
-  })
-
-  it('routes through singleProxy, never the per-protocol fields', () => {
-    // ADR-01：proxyForHttp/Https 会让「非 HTTP/HTTPS/FTP 的流量直接发送而不经过代理」。
-    const rules = buildProxyConfig(settings).rules
-    expect(rules?.singleProxy).toBeDefined()
-    expect(rules?.proxyForHttp).toBeUndefined()
-    expect(rules?.proxyForHttps).toBeUndefined()
-    expect(rules?.proxyForFtp).toBeUndefined()
-    expect(rules?.fallbackProxy).toBeUndefined()
-  })
-
-  it('points singleProxy at the configured host and port over http', () => {
-    const server = buildProxyConfig(settings).rules?.singleProxy
-    expect(server).toEqual({ scheme: 'http', host: '127.0.0.1', port: 7890 })
-  })
-
-  it('honours a user-changed port instead of hardcoding 7890', () => {
-    // 技术方案 §22 Case 4：端口必须可改。
-    const custom = buildProxyConfig({ ...settings, proxyPort: 1080 })
-    expect(custom.rules?.singleProxy?.port).toBe(1080)
-  })
-
-  it('bypasses localhost in all four forms', () => {
-    // ADR-02：<local> 只匹配「不含点且不是 IP 字面量」的简单主机名，
-    // 所以 127.0.0.1 与 [::1] 必须显式列出，否则扩展访问 Controller(9090)
-    // 的请求会被再次送进代理(7890) 形成自环。
-    const bypass = buildProxyConfig(settings).rules?.bypassList
-    expect(bypass).toContain('<local>')
-    expect(bypass).toContain('localhost')
-    expect(bypass).toContain('127.0.0.1')
-    expect(bypass).toContain('[::1]')
-  })
-
-  it('produces a mutable bypassList array', () => {
-    // 常量是 readonly，chrome API 要的是 string[]。若忘了展开会编译失败，
-    // 这条测试保证展开出来的是独立数组，改它不会污染全局常量。
-    const first = buildProxyConfig(settings).rules?.bypassList
-    first?.push('example.com')
-    const second = buildProxyConfig(settings).rules?.bypassList
-    expect(second).not.toContain('example.com')
-  })
-})
 
 describe('isBlockedByControl', () => {
   it.each(['not_controllable', 'controlled_by_other_extensions'] as const)(
@@ -99,27 +65,18 @@ describe('inspectProxy', () => {
     expect(inspection.levelOfControl).toBe('controllable_by_this_extension')
   })
 
-  it('recognises our own configuration', async () => {
-    await enableProxy(settings)
-    const inspection = await inspectProxy(settings)
-    expect(inspection.matchesExpected).toBe(true)
-    expect(inspection.mode).toBe('fixed_servers')
-  })
-
   it('reports a mismatch when the port differs', async () => {
     await enableProxy(settings)
     const inspection = await inspectProxy({ ...settings, proxyPort: 1080 })
     expect(inspection.matchesExpected).toBe(false)
   })
 
-  it('reports a mismatch when the browser is in direct mode', async () => {
-    proxySetting.value = { mode: 'direct' }
-    const inspection = await inspectProxy(settings)
-    expect(inspection.matchesExpected).toBe(false)
-    expect(inspection.mode).toBe('direct')
-  })
-
   it('degrades to unknown instead of throwing when the query fails', async () => {
+    /*
+     * 这是共享层的决策：平台方法查询失败时**抛错**，由 inspectProxy 兜成
+     * 'unknown'。上层需要「查不到」与「查到了但不匹配」在类型上就分得开 ——
+     * 否则一次查询失败会被当成「代理没生效」而触发不必要的重写。
+     */
     proxySetting.failNextGet = new Error('boom')
     const inspection = await inspectProxy(settings)
     expect(inspection.levelOfControl).toBe('unknown')
@@ -128,14 +85,11 @@ describe('inspectProxy', () => {
 })
 
 describe('enableProxy', () => {
-  it('writes the config with regular scope', async () => {
+  it('writes the config exactly once', async () => {
     const result = await enableProxy(settings)
 
     expect(result.ok).toBe(true)
     expect(proxySetting.setCalls).toHaveLength(1)
-    // ADR-07：regular 会被 incognito 继承，所以 InPrivate 窗口也走代理。
-    // 若写成 'regular_only'，InPrivate 会漏出真实 IP。
-    expect(proxySetting.setCalls[0]?.scope).toBe('regular')
   })
 
   it('refuses to override another extension', async () => {
@@ -171,6 +125,11 @@ describe('enableProxy', () => {
   })
 
   it('surfaces a write failure as an error instead of throwing', async () => {
+    /*
+     * 平台方法抛错，共享层归一成 NormalizedError。
+     * 归一放在共享层是刻意的：挑错误码、写文案是决策，
+     * 若每个平台各归一一次，两边的安全提示措辞迟早漂移。
+     */
     proxySetting.failNextSet = new Error('set rejected')
 
     const result = await enableProxy(settings)
@@ -180,9 +139,9 @@ describe('enableProxy', () => {
   })
 
   it('applies the proxy without depending on the core being reachable', async () => {
-    // 🔴 ADR-03 fail-closed 的结构保证：proxy.ts 刻意不 import mihomo，
+    // 🔴 ADR-03 fail-closed 的结构保证：代理层刻意不 import mihomo，
     // 不发任何网络请求。这里把 fetch 直接从全局删掉——
-    // 若 enableProxy 内部偷偷做了探活，就会炸在这条测试上。
+    // 若 enableProxy 或其下的平台实现内部偷偷做了探活，就会炸在这条测试上。
     const originalFetch = globalThis.fetch
     Reflect.deleteProperty(globalThis, 'fetch')
 
@@ -198,7 +157,7 @@ describe('enableProxy', () => {
 
 describe('disableProxy', () => {
   it('clears the setting rather than forcing direct mode', async () => {
-    // 🔴 ADR-18：set({mode:'direct'}) 会让本扩展继续持有控制权并强制全局直连，
+    // 🔴 ADR-18：写一个显式的 direct 配置会让本扩展继续持有控制权并强制全局直连，
     // 越权覆盖用户可能存在的系统代理或其他扩展。
     // 「关闭 LostProxy」的正确语义是「不再干预」。
     await enableProxy(settings)
@@ -209,11 +168,6 @@ describe('disableProxy', () => {
     expect(result.ok).toBe(true)
     expect(proxySetting.clearCalls).toHaveLength(1)
     expect(proxySetting.setCalls).toHaveLength(0)
-  })
-
-  it('clears with regular scope', async () => {
-    await disableProxy()
-    expect(proxySetting.clearCalls[0]?.scope).toBe('regular')
   })
 
   it('releases control back to the lower layers', async () => {
@@ -234,199 +188,17 @@ describe('disableProxy', () => {
   })
 })
 
-describe('normalizeProxyError', () => {
-  const FATAL = { fatal: true, error: 'net::ERR_PROXY_CONNECTION_FAILED', details: '' }
-  const NON_FATAL = { fatal: false, error: 'net::ERR_PROXY_CONNECTION_FAILED', details: '' }
-
-  it('reassures the user when the request was blocked', () => {
-    const error = normalizeProxyError(FATAL)
-
-    expect(error.code).toBe('PROXY_RUNTIME_ERROR')
-    // fatal=true 意味着请求被拦住了 —— 没有泄漏。必须说出来：
-    // 用户看到红色告警的第一反应是慌，不告诉他"没漏"是失职。
-    expect(error.message).toMatch(/not exposed/i)
-    expect(error.message).not.toMatch(/may have been exposed/i)
-  })
-
-  it('warns about IP exposure when the browser fell back to DIRECT', () => {
-    // 🔴 ADR-04：官方定义 fatal=false 为「a direct connection is used instead」——
-    // 请求已经直连出去了。这是运行时唯一能观测到静默直连的信号。
-    const error = normalizeProxyError(NON_FATAL)
-
-    expect(error.code).toBe('PROXY_LEAK_SUSPECTED')
-    expect(error.message).toMatch(/DIRECT/)
-    expect(error.message).toMatch(/may have been exposed/i)
-    // 关键：高危场景下绝不能出现任何安抚措辞。
-    expect(error.message).not.toMatch(/not exposed/i)
-  })
-
-  it('🔴 uses two distinct codes for the two fatal cases', () => {
-    // 这是自愈策略的地基（ADR-22）：两者的严重程度相反，
-    // 因此自愈策略也必须相反。共用一个码就无法区分处理。
-    expect(normalizeProxyError(FATAL).code).toBe('PROXY_RUNTIME_ERROR')
-    expect(normalizeProxyError(NON_FATAL).code).toBe('PROXY_LEAK_SUSPECTED')
-  })
-
-  it('keeps the two messages semantically opposite', () => {
-    // 这两种情况的严重程度是相反的，文案取向也必须相反。
-    // 若有人把它们合并成一句"通用"文案，这条会炸。
-    expect(normalizeProxyError(FATAL).message).not.toBe(normalizeProxyError(NON_FATAL).message)
-  })
-
-  it('keeps raw Chromium error codes out of the user-facing message', () => {
-    // net::ERR_* 是给开发者看的错误码，对用户毫无意义。
-    // 而 details 可能是很长的 PAC 运行时 dump，塞进文案既无用又扩大意外泄漏面。
-    const noise = 'a-very-long-pac-runtime-dump-that-should-not-surface'
-
-    for (const fatal of [true, false]) {
-      const error = normalizeProxyError({ fatal, error: 'net::ERR_FAILED', details: noise })
-      expect(error.message).not.toContain('net::')
-      expect(error.message).not.toContain(noise)
-    }
-  })
-
-  it('points at an actionable next step', () => {
-    // 只说"出错了"没有价值。fatal 分支必须指向可操作的排查方向。
-    expect(normalizeProxyError(FATAL).message).toMatch(/mihomo/i)
-  })
-
-  it('stamps a timestamp', () => {
-    const before = Date.now()
-    expect(normalizeProxyError(FATAL).at).toBeGreaterThanOrEqual(before)
-  })
-})
-
 describe('registerProxyErrorListener', () => {
   it('registers exactly one listener', () => {
+    /*
+     * 只验「注册了一个」这件事，不验归一结果 —— 后者取决于原始事件的形状
+     * （Chromium 的 fatal 字段），住在 platform-chromium.test.ts。
+     *
+     * ⚠️ MV3 约束：这个注册必须在 Service Worker 顶层同步发生。
+     *    延迟注册会让 SW 被唤醒后的事件在监听器挂上之前丢失 ——
+     *    而丢掉的可能正是那条 fatal=false（已经直连过）的告警。
+     */
     registerProxyErrorListener(() => {})
     expect(proxyErrorListenerCount()).toBe(1)
-  })
-
-  it('forwards a normalized error to the handler', () => {
-    const received: NormalizedError[] = []
-    registerProxyErrorListener((error) => {
-      received.push(error)
-    })
-
-    emitProxyError({ fatal: false, error: 'net::ERR_PROXY_CONNECTION_FAILED', details: '' })
-
-    expect(received).toHaveLength(1)
-    expect(received[0]?.code).toBe('PROXY_LEAK_SUSPECTED')
-    expect(received[0]?.message).toMatch(/may have been exposed/i)
-  })
-})
-
-// ===========================================================================
-// V0.4 分流模式
-// ===========================================================================
-
-describe('buildProxyConfig · 分流模式', () => {
-  const smart = (rules: readonly string[]) =>
-    buildProxyConfig({ ...DEFAULT_SETTINGS, routingMode: 'smart', directRules: rules })
-
-  it('uses fixed_servers for global mode', () => {
-    const config = buildProxyConfig({ ...DEFAULT_SETTINGS, routingMode: 'global' })
-    expect(config.mode).toBe('fixed_servers')
-  })
-
-  it('uses pac_script for smart mode with rules', () => {
-    expect(smart(['*.edu.cn']).mode).toBe('pac_script')
-  })
-
-  it('🔴 always sets mandatory: true on the PAC script', () => {
-    /*
-     * security.md §4：PAC 默认 fail-open —— 脚本无效时浏览器**静默退回直连**，
-     * 与 fixed_servers 的失败语义正好相反。漏掉这个字段就等于把 V0.1
-     * 辛苦建立的 fail-closed 语义作废，且完全无声。
-     *
-     * 这是整个 V0.4 里最不能错的一格。
-     */
-    expect(smart(['*.edu.cn']).pacScript?.mandatory).toBe(true)
-  })
-
-  it('🔴 falls back to fixed_servers when smart has no usable rules', () => {
-    /*
-     * 空清单时生成 PAC 没有意义（行为等同全局），而 fixed_servers 更简单、
-     * 更可预测，且不必让每个请求都执行一次 JS。
-     * 更重要的是：这样就不存在"空规则的 PAC 脚本"这种边界形态。
-     */
-    expect(smart([]).mode).toBe('fixed_servers')
-    // 全部规则都非法时同理 —— 不能因为清单非空就生成脚本。
-    expect(smart(["bad'", 'also:bad']).mode).toBe('fixed_servers')
-  })
-
-  it('uses inline data rather than a remote URL', () => {
-    /*
-     * 用 url 会引入"取不到脚本"这个额外的失败模式（也是 fail-open 的触发点之一）。
-     * 内联 data 从根上消除它（ADR-33）。
-     */
-    const config = smart(['*.edu.cn'])
-    expect(config.pacScript?.data).toBeTruthy()
-    expect(config.pacScript?.url).toBeUndefined()
-  })
-
-  it('🔴 the generated script never contains a DIRECT fallback after PROXY', () => {
-    // "PROXY x; DIRECT" 会让代理连不上时静默直连。
-    const data = smart(['*.edu.cn']).pacScript?.data ?? ''
-    expect(data).not.toMatch(/PROXY[^"']*;\s*DIRECT/)
-  })
-})
-
-describe('🔴 inspectProxy · 期望的 mode 与实际 mode 必须相符', () => {
-  const smartSettings = {
-    ...DEFAULT_SETTINGS,
-    routingMode: 'smart' as const,
-    directRules: ['*.edu.cn'],
-  }
-
-  it('🔴 does not report a match when smart expects PAC but the browser is on fixed_servers', async () => {
-    /*
-     * 这是此方写错过的那个 bug，也是本项目最不能出的失败形态。
-     *
-     * 原实现的条件是 `expected.routingMode === 'smart' && config.mode === 'pac_script'`。
-     * 浏览器停在 fixed_servers 时该条件不成立，于是穿透到下面的
-     * fixed_servers 比较，并因为 host/port 恰好相同而返回 true ——
-     * `proxyActuallySet` 报 true，UI 显示"智能分流已生效、状态一致"，
-     * 而浏览器其实在把所有流量送进代理，包括本该直连的校内站点。
-     *
-     * 关键在于：出这个 bug 时，原有的全部测试都是绿的。
-     */
-    proxySetting.value = {
-      mode: 'fixed_servers',
-      rules: {
-        singleProxy: { scheme: 'http', host: DEFAULT_SETTINGS.proxyHost, port: DEFAULT_SETTINGS.proxyPort },
-        bypassList: [...PROXY_BYPASS_LIST],
-      },
-    }
-
-    const inspection = await inspectProxy(smartSettings)
-
-    expect(inspection.matchesExpected).toBe(false)
-  })
-
-  it('reports a match when smart is actually on PAC with our address', async () => {
-    proxySetting.value = buildProxyConfig(smartSettings)
-
-    expect((await inspectProxy(smartSettings)).matchesExpected).toBe(true)
-  })
-
-  it('🔴 does not report a match when global expects fixed_servers but the browser is on PAC', async () => {
-    // 反方向同样要堵：切回全局后若 PAC 还挂着，那也是状态不一致。
-    proxySetting.value = buildProxyConfig(smartSettings)
-
-    const inspection = await inspectProxy({ ...DEFAULT_SETTINGS, routingMode: 'global' })
-
-    expect(inspection.matchesExpected).toBe(false)
-  })
-
-  it('still matches fixed_servers when smart has no usable rules', async () => {
-    /*
-     * smart 且无规则时 buildProxyConfig 退回 fixed_servers，
-     * 所以此时浏览器在 fixed_servers 才是**正确**的 —— 不能误报不一致。
-     */
-    const noRules = { ...DEFAULT_SETTINGS, routingMode: 'smart' as const, directRules: [] }
-    proxySetting.value = buildProxyConfig(noRules)
-
-    expect((await inspectProxy(noRules)).matchesExpected).toBe(true)
   })
 })

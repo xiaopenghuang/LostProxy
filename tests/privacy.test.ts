@@ -1,11 +1,24 @@
 /**
- * privacy 层单元测试（WebRTC IP 处理策略）。
+ * WebRTC 锁的**决策层**单元测试。
  *
- * 核心断言两件事：
- *   1. 加锁写入的值必须是 disable_non_proxied_udp（Mode 4「Force proxy」），
- *      而不是任何看起来"更安全"的其它值；
- *   2. 锁的生命周期绑定在代理开关上——代理关闭时必须解锁，
- *      因为那时候锁 WebRTC 没有保护意义，只会白白降低通话质量。
+ * 核心断言的是一条与浏览器无关的策略：
+ *
+ *   **锁的生命周期绑定在代理开关上** —— 代理关闭时必须解锁，
+ *   因为那时候锁 WebRTC 没有保护意义（本来就是直连），
+ *   却会实实在在地降低通话质量（强制走 TCP）。
+ *
+ * 加上「被别的扩展控制时不强行覆盖」「查询失败不阻断写入」
+ * 「解锁用释放而非写一个宽松值」这三条 —— 全部与平台无关。
+ *
+ * ## 那个具体的策略值不在这里
+ *
+ * 🔴 `disable_non_proxied_udp` 这个**值**是 Chromium 特有的，断言它的测试
+ *    住在 `platform-chromium.test.ts`。原因不是分类洁癖：自 Firefox 70 起
+ *    （Bugzilla 1452713）同名值的语义退化成「有代理才强制」，
+ *    抄过去会被**接受**、**不报错**、而防护**更弱**，等价物是 `proxy_only`。
+ *
+ *    把值的断言留在这里会让它读起来像"全平台都该是这个值"——
+ *    而那正是抄错的起点（architecture.md ADR-36）。
  */
 
 import { describe, expect, it } from 'vitest'
@@ -15,22 +28,14 @@ import {
   syncWebRtcLock,
   unlockWebRtc,
 } from '../src/background/privacy'
-import { WEBRTC_LOCKED_POLICY } from '../src/shared/constants'
 import { webRtcSetting } from './setup'
 
 describe('lockWebRtc', () => {
-  it('writes disable_non_proxied_udp with regular scope', () => {
-    // 该值对应 IETF draft-ietf-rtcweb-ip-handling 的 Mode 4「Force proxy」。
-    expect(WEBRTC_LOCKED_POLICY).toBe('disable_non_proxied_udp')
-  })
-
-  it('applies the lock', async () => {
+  it('applies the lock exactly once', async () => {
     const result = await lockWebRtc()
 
     expect(result.ok).toBe(true)
     expect(webRtcSetting.setCalls).toHaveLength(1)
-    expect(webRtcSetting.setCalls[0]?.value).toBe('disable_non_proxied_udp')
-    expect(webRtcSetting.setCalls[0]?.scope).toBe('regular')
   })
 
   it('refuses to override another extension', async () => {
@@ -71,9 +76,9 @@ describe('lockWebRtc', () => {
 })
 
 describe('unlockWebRtc', () => {
-  it('clears the setting rather than writing "default"', async () => {
-    // ADR-18：显式写 'default' 会让本扩展继续持有控制权，
-    // 并覆盖用户或其他扩展可能设置的更严格策略。
+  it('clears the setting rather than writing a permissive value', async () => {
+    // ADR-18：显式写一个值（如 'default'）会让本扩展继续持有控制权，
+    // 并覆盖用户或其他扩展可能设置的**更严格**策略。
     await lockWebRtc()
     webRtcSetting.setCalls = []
 
@@ -102,16 +107,10 @@ describe('inspectWebRtcPolicy', () => {
   })
 
   it('reports locked after applying the lock', async () => {
+    // 只验「加锁后 locked 为 true」这个因果，不验具体值 ——
+    // 判定 locked 的**值**由平台决定（见文件头 🔴）。
     await lockWebRtc()
-    const inspection = await inspectWebRtcPolicy()
-    expect(inspection.locked).toBe(true)
-    expect(inspection.policy).toBe('disable_non_proxied_udp')
-  })
-
-  it('does not treat a weaker policy as locked', async () => {
-    webRtcSetting.value = 'default_public_interface_only'
-    const inspection = await inspectWebRtcPolicy()
-    expect(inspection.locked).toBe(false)
+    expect((await inspectWebRtcPolicy()).locked).toBe(true)
   })
 
   it('degrades to unknown instead of throwing when the query fails', async () => {

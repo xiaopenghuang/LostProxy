@@ -16,9 +16,21 @@
  *    它**语法完全合法**，`mandatory` 拦不住，浏览器不会报任何错，
  *    而用户以为自己配了分流。这是本项目所有失败模式里最坏的一种 ——
  *    静默、且正好发生在用户以为受保护的时候。
+ *
+ * ## 为什么这个文件没有搬进 platform/
+ *
+ * `buildPacScript` 确实只有 Chromium 用得上 —— Firefox 的 `proxy.settings`
+ * **只支持 `autoConfigUrl`，不支持内联 PAC**，那边要用 `proxy.onRequest`
+ * 直接拿规则做判断（顺带把这里的注入面整个消掉）。
+ *
+ * 但 `sanitizeRule` / `sanitizeRules` 是**跨平台**的：它们校验的是用户输入，
+ * `storage.ts` 的 `validateSettings` 也在用，而 Firefox 那条路同样需要
+ * 先把规则洗干净再用。把整个文件搬进 `platform/chromium.ts` 会让共享的
+ * 校验逻辑被锁在一个平台目录里，将来只能靠跨平台 import 绕回来 ——
+ * 那比留在这里更难读。
  */
 
-import { RULE_ALLOWED_PATTERN, PROXY_BYPASS_LIST } from '../shared/constants'
+import { RULE_ALLOWED_PATTERN, LOOPBACK_HOSTS } from '../shared/constants'
 
 /**
  * 把一条规则转成 PAC 里可比较的形式。
@@ -169,7 +181,7 @@ export function buildPacScript(proxyHost: string, proxyPort: number, rules: read
   var PROXY_STR = ${JSON.stringify(proxy)};
   var DIRECT_SUFFIX = ${JSON.stringify(suffixes)};
   var DIRECT_EXACT = ${JSON.stringify(exacts)};
-  var LOCAL = ${JSON.stringify(PROXY_BYPASS_LIST.filter((e) => e !== '<local>'))};
+  var LOCAL = ${JSON.stringify(LOOPBACK_HOSTS)};
 
   host = ('' + host).toLowerCase();
 

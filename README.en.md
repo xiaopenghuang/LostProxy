@@ -11,7 +11,7 @@
 ![Manifest](https://img.shields.io/badge/Manifest-V3-4285F4?logo=googlechrome&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8%20(Rolldown)-646CFF?logo=vite&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-464%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-917%20passing-brightgreen)
 
 [![Release](https://img.shields.io/github/v/release/xiaopenghuang/LostProxy?label=download&color=success)](https://github.com/xiaopenghuang/LostProxy/releases/latest)
 
@@ -179,7 +179,7 @@ mode.
 | Extension platform | Manifest V3 (`proxy` + `storage` + `privacy` permissions) |
 | Language | TypeScript 7 (native/Go compiler) |
 | Build | Vite 8 (Rolldown), hand-written config, two output passes |
-| Tests | Vitest 4, 464 tests, hand-written `chrome.*` mocks |
+| Tests | Vitest 4, 917 tests, hand-written `chrome.*` mocks |
 | UI | Plain HTML/CSS, no UI framework; Fluent Design visual language |
 | i18n | Hand-rolled; the EN dictionary is the single source of truth, so a missing translation is a compile error |
 
@@ -196,7 +196,7 @@ src/
   popup/        toggle, status card, alerts
   options/      settings, language switch, controller probe
   shared/       types / constants / errors / i18n / messages
-tests/          464 unit tests and chrome API mocks
+tests/          917 unit tests and chrome API mocks
 scripts/        icon downscaling and generation
 ```
 
@@ -215,7 +215,7 @@ throws, so nobody can quietly start writing to it later.
 ## Tests
 
 ```bash
-npm run test        # 464 tests, ~0.5s
+npm run test        # 917 tests, ~0.5s
 npm run verify      # typecheck + test + build
 ```
 

@@ -11,7 +11,7 @@
 ![Manifest](https://img.shields.io/badge/Manifest-V3-4285F4?logo=googlechrome&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8%20(Rolldown)-646CFF?logo=vite&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-464%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-917%20passing-brightgreen)
 
 [![Release](https://img.shields.io/github/v/release/xiaopenghuang/LostProxy?label=download&color=success)](https://github.com/xiaopenghuang/LostProxy/releases/latest)
 
@@ -157,7 +157,7 @@ npm run build
 | 扩展平台 | Manifest V3（`proxy` + `storage` + `privacy` 权限） |
 | 语言 | TypeScript 7（native/Go 编译器） |
 | 构建 | Vite 8（Rolldown），手写配置，两趟输出 |
-| 测试 | Vitest 4，464 项，含 `chrome.*` 手写 mock |
+| 测试 | Vitest 4，917 项，含 `chrome.*` 手写 mock |
 | 界面 | 原生 HTML/CSS，无 UI 框架；Fluent Design 视觉语言 |
 | i18n | 自实现，EN 词典为单一真源，缺翻译是编译期错误 |
 
@@ -174,7 +174,7 @@ src/
   popup/        开关、状态卡片、告警
   options/      设置页、语言切换、Controller 探活
   shared/       types / constants / errors / i18n / messages
-tests/          464 项单元测试与 chrome API mock
+tests/          917 项单元测试与 chrome API mock
 scripts/        图标降采样与生成
 ```
 
@@ -191,7 +191,7 @@ storage 重读。业务决策不散落在 `proxy.ts` 里，集中在 `orchestrat
 ## 测试
 
 ```bash
-npm run test        # 464 项，约 0.5s
+npm run test        # 917 项，约 0.5s
 npm run verify      # typecheck + test + build
 ```
 

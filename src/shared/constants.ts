@@ -128,35 +128,30 @@ export const STORAGE_KEYS = Object.freeze({
 })
 
 /**
- * 代理 bypass 列表 —— **四项都必须存在**。
+ * 必须绕过代理的本机地址。
  *
- * `<local>` 的官方语义是「匹配简单主机名」，而简单主机名的定义是
- * 「不含点且不是 IP 字面量」。因此：
- *   - `localhost`  → 被 <local> 覆盖
- *   - `127.0.0.1`  → **不被覆盖**（是 IP 字面量）
- *   - `[::1]`      → **不被覆盖**（是 IP 字面量）
- *
- * 少写任何一项都会导致「扩展访问 Controller 的请求被再次送进代理链」，
+ * 这三个是**与浏览器无关的事实**：`127.0.0.1` 与 `[::1]` 是 IP 字面量，
+ * 任何"简单主机名"类的通配都覆盖不到它们（Chromium 的 `<local>` 令牌就是
+ * 这样定义的：「不含点且不是 IP 字面量」）。少绕过任何一项都会导致
+ * 「扩展访问 Controller 的请求被再次送进代理链」，形成自环 ——
  * 且不会报错，只会诡异地卡住。详见 architecture.md ADR-02。
+ *
+ * ⚠️ 这里刻意**不含** `<local>`：那是 Chromium bypassList 的语法令牌，
+ *    Firefox 的 `passthrough` 不认它。平台特有的令牌由平台自己拼上
+ *    （见 `background/platform/chromium.ts` 的 `PROXY_BYPASS_LIST`），
+ *    本常量只陈述"哪些地址是本机"这个跨平台事实。
+ *
+ * PAC 脚本也直接用这份清单 —— 它需要的正是不带令牌的纯地址表。
  */
-export const PROXY_BYPASS_LIST: readonly string[] = Object.freeze([
-  '<local>',
+export const LOOPBACK_HOSTS: readonly string[] = Object.freeze([
   'localhost',
   '127.0.0.1',
   '[::1]',
 ])
 
-/**
- * 代理服务器的 scheme。
- *
- * 'http' 而非 'socks5'：Mihomo 的 mixed-port 同时支持 HTTP 与 SOCKS，
- * 而走 HTTP 代理时 Chromium 会把域名交给代理去解析（CONNECT 用域名），
- * 因此不会产生本地 DNS 泄漏。
- */
-export const PROXY_SCHEME = 'http' as const
-
 /** Controller 探活超时。3 秒足够本机回环，再长只是让 UI 干等。 */
 export const CORE_PROBE_TIMEOUT_MS = 3000
+
 
 /**
  * 瞬时告警在自愈前必须"静默"多久。
@@ -170,26 +165,20 @@ export const CORE_PROBE_TIMEOUT_MS = 3000
  */
 export const ALERT_STALE_AFTER_MS = 30_000
 
-/**
- * WebRTC 加锁时使用的 IP 处理策略。
+/*
+ * 以下两个常量曾经在这里，现已搬到 `background/platform/chromium.ts`：
  *
- * 对应 IETF draft-ietf-rtcweb-ip-handling 的 Mode 4「Force proxy」：
- * 强制 WebRTC 媒体走代理；由于 HTTP 代理与多数 SOCKS 代理不支持 UDP，
- * 实际效果是禁用 UDP、退回 TCP。
+ *   - WEBRTC_LOCKED_POLICY ('disable_non_proxied_udp')
+ *   - SETTING_SCOPE        ('regular')
  *
- * 该设置的浏览器默认值是 'default'，**不强制走代理**——
- * 也就是说不主动加锁就存在真实 IP 泄漏面（architecture.md ADR-05）。
+ * 搬走的理由不是整理代码，而是**它们的值本身就是 Chromium 特有的**：
+ *   - Firefox 里同名的 WebRTC 策略值语义更弱（Bugzilla 1452713），
+ *     等价物是 `proxy_only` —— 抄过去会被接受、不报错、防护更弱；
+ *   - Firefox 的 `BrowserSetting.set()` **根本没有** scope 参数。
+ *
+ * 留在 shared/ 会让人以为它们是跨平台契约，而"以为是共享的平台特有值"
+ * 正是抄错的起点（architecture.md ADR-36）。
  */
-export const WEBRTC_LOCKED_POLICY = 'disable_non_proxied_udp' as const
-
-/**
- * 写入浏览器设置时使用的 scope。
- *
- * 'regular' 会被 incognito 窗口继承（除非被更高优先级的 scope 覆盖），
- * 因此 InPrivate 窗口同样走代理，不构成泄漏缺口（architecture.md ADR-07）。
- * 刻意不使用 'regular_only'——那会让 InPrivate 窗口漏出去。
- */
-export const SETTING_SCOPE = 'regular' as const
 
 /** 端口合法区间。 */
 export const PORT_MIN = 1
