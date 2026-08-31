@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  # 允许手动跑一次而不发布，用来验证 workflow 本身没写错。
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: '只构建，不创建 Release'
+        type: boolean
+        default: true
+
+# 顶层收到最小权限，需要写的那个 job 自己往上加。
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false # 发布中途被取消会留下半成品 Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # 创建 Release、上传资产
+      id-token: write # 换取 Sigstore 短期签名证书
+      attestations: write # 持久化构建来源证明
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # 测试不过就不发。这是发布闸门，不是可选步骤。
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
+
+      # scripts/package.mjs 内部会校验 git tag / manifest.json / package.json
+      # 三处版本号一致，不一致直接退出非零。
+      - name: Build and package
+        id: pkg
+        run: npm run package
+
+      - name: Verify archive
+        run: |
+          unzip -t "${{ steps.pkg.outputs.path }}"
+          mkdir -p /tmp/check
+          unzip -q "${{ steps.pkg.outputs.path }}" -d /tmp/check
+          diff -r dist /tmp/check --exclude=LICENSE
+          test -f /tmp/check/manifest.json
+          echo "archive verified"
+
+      # 把「这个文件由这个仓库的这个 commit 在这次公开可查的构建中产出」
+      # 签成可验证的声明。代理类工具值得有这个。
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: ${{ steps.pkg.outputs.path }}
+
+      - name: Compose release notes
+        run: |
+          sed -e "s/__VERSION__/${{ steps.pkg.outputs.version }}/g" \
+              -e "s/__SHA256__/${{ steps.pkg.outputs.sha256 }}/g" \
+              -e "s/__COMMIT__/${{ github.sha }}/g" \
+              .github/release-notes.md > /tmp/notes.md
+          echo "--- composed notes ---"
+          cat /tmp/notes.md
+
+      # 用 runner 预装的 gh CLI，而不是第三方 action —— 少一个持有
+      # contents:write 的外部依赖。
+      - name: Create release
+        if: github.ref_type == 'tag' && !inputs.dry-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            "${{ steps.pkg.outputs.path }}#LostProxy ${{ github.ref_name }} (unpacked extension, load via edge://extensions)" \
+            "${{ steps.pkg.outputs.path }}.sha256#SHA-256 checksum" \
+            --title "${{ github.ref_name }} — 只让这一个浏览器走代理 / Proxy this browser only" \
+            --notes-file /tmp/notes.md \
+            --latest
+
+      - name: Dry run summary
+        if: github.ref_type != 'tag' || inputs.dry-run
+        run: |
+          echo "### Dry run — 没有创建 Release" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- 产物 \`${{ steps.pkg.outputs.name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- SHA-256 \`${{ steps.pkg.outputs.sha256 }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "推一个 \`v*\` tag 才会真正发布。" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 默认最小权限。CI 只需要读代码，不需要任何写权限。
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      # 第三方 action 一律钉 commit SHA 而非 tag —— tag 是可变的，
+      # v6 可以被重新指向另一个 commit，SHA 不能。
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      # ci 而非 install：严格按 lockfile 装，不接受版本漂移。
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
+
+      # 打包本身也是一道校验：版本号三处一致、manifest 引用不悬空。
+      # 在 PR 上就跑，别等打了 tag 才发现。
+      - name: Build and package
+        run: npm run package
+
+      - name: Verify archive extracts and matches dist
+        run: |
+          unzip -t release/lostproxy-*.zip
+          mkdir -p /tmp/check
+          unzip -q release/lostproxy-*.zip -d /tmp/check
+          diff -r dist /tmp/check --exclude=LICENSE
+          echo "archive matches dist/"

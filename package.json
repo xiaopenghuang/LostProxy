@@ -9,6 +9,7 @@
     "icons": "node scripts/resize-icon.mjs",
     "icons:generated": "node scripts/generate-icons.mjs",
     "build": "npm run clean && vite build && vite build --config vite.config.sw.ts",
+    "package": "npm run build && node scripts/package.mjs",
     "watch": "vite build --watch",
     "watch:sw": "vite build --config vite.config.sw.ts --watch",
     "typecheck": "tsc --noEmit",

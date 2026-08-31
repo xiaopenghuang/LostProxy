@@ -80,8 +80,15 @@ Download `lostproxy-v<version>.zip` from
 > (`CRX_REQUIRED_PROOF_MISSING`), so "load unpacked" is the only route outside the store. One-click
 > installation will come with an Edge Add-ons listing; that is for later.
 
-A proxy tool is worth checking the hash of — the release page carries a SHA-256. You can also
-[build from source](#building-from-source).
+A proxy tool is worth checking the hash of — the release page carries a SHA-256. From v0.1.1
+onward, artifacts are built by GitHub Actions with a Sigstore-signed provenance attestation, so you
+can confirm the file came from a public build of this repository rather than someone's upload:
+
+```bash
+gh attestation verify lostproxy-v<version>.zip --repo xiaopenghuang/LostProxy
+```
+
+You can also [build from source](#building-from-source).
 
 **Installing it alone does not get you connected** — you also need the prerequisites below.
 
@@ -157,6 +164,7 @@ After changing code, run `npm run build` again and hit **Reload** on the extensi
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run test` | Vitest unit tests |
 | `npm run verify` | typecheck + test + build |
+| `npm run package` | Build and produce a distributable zip in `release/`, with SHA-256 |
 | `npm run icons` | Re-derive the four icon sizes from `src/public/icons/icon.png` |
 
 **Why the build runs twice**: an MV3 service worker must be a self-contained single file — the

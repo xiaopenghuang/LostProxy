@@ -67,7 +67,14 @@ Chrome ──▶ DIRECT ──────────────────�
 > **为什么不是双击安装**：Chromium 从 URL 下载 `.crx` 会直接拒绝（`CRX_REQUIRED_PROOF_MISSING`），
 > 商店之外只有「加载解压缩」这一条路。上架 Edge Add-ons 商店后会有一键安装，那是后面的事。
 
-代理工具值得核对哈希，Release 页面附了 SHA-256。也可以直接[从源码构建](#从源码构建)。
+代理工具值得核对哈希，Release 页面附了 SHA-256。从 v0.1.1 起，产物由 GitHub Actions 构建并带
+Sigstore 签名的来源证明，可以验证它确实来自本仓库的某次公开构建，而不是谁手动传上来的：
+
+```bash
+gh attestation verify lostproxy-v<版本>.zip --repo xiaopenghuang/LostProxy
+```
+
+也可以直接[从源码构建](#从源码构建)。
 
 **装上它本身不会让你能上网** —— 还需要下面这些前置条件。
 
@@ -137,6 +144,7 @@ npm run build
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run test` | Vitest 单元测试 |
 | `npm run verify` | typecheck + test + build 全量自检 |
+| `npm run package` | 构建并打出可分发的 zip 到 `release/`（附 SHA-256） |
 | `npm run icons` | 从 `src/public/icons/icon.png` 重新降采样出四种尺寸 |
 
 **为什么构建要跑两趟**：MV3 的 Service Worker 必须是自包含单文件（一旦产生 chunk import 就
