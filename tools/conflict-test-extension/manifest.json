@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "ZZ Proxy Conflict Fixture (test only)",
+  "version": "1.0.0",
+  "description": "Test fixture. Grabs chrome.proxy so LostProxy's conflict detection can be verified. Not a usable proxy tool. Uninstall after testing.",
+  "permissions": ["proxy"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Conflict fixture — click to toggle"
+  }
+}
