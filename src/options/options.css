@@ -1,0 +1,292 @@
+/* LostProxy Settings —— 与 Popup 同一套 Fluent 变量。
+   表单布局对应技术方案 §14。
+
+   文件名刻意不叫 style.css：Popup 已有一个 style.css，
+   同名 asset 在同一个 dist/assets 目录下会撞名。 */
+
+:root {
+  color-scheme: light dark;
+
+  --accent: #0f6cbd;
+  --accent-hover: #115ea3;
+  --accent-soft: rgba(15, 108, 189, 0.09);
+
+  --ok: #0e700e;
+  --danger: #c50f1f;
+
+  --page: #f3f3f3;
+  --card: #ffffff;
+  --card-hover: #fafafa;
+  --stroke: rgba(0, 0, 0, 0.0578);
+  --stroke-strong: rgba(0, 0, 0, 0.14);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 0 1px rgba(0, 0, 0, 0.04);
+
+  --fg: #1b1b1b;
+  --fg-secondary: #616161;
+  --fg-tertiary: #8a8a8a;
+
+  --radius-card: 8px;
+  --radius-control: 5px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #479ef5;
+    --accent-hover: #62abf5;
+    --accent-soft: rgba(71, 158, 245, 0.14);
+
+    --ok: #54b054;
+    --danger: #ff99a4;
+
+    --page: #202020;
+    --card: #2b2b2b;
+    --card-hover: #323232;
+    --stroke: rgba(255, 255, 255, 0.0837);
+    --stroke-strong: rgba(255, 255, 255, 0.18);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+
+    --fg: #ffffff;
+    --fg-secondary: #cfcfcf;
+    --fg-tertiary: #9a9a9a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+  见 popup/style.css 里的同名规则：HTML 的 hidden 属性会被任何
+  作者声明的 display 覆盖，必须显式兜住。
+*/
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--fg);
+  background: var(--page);
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 40px 24px 72px;
+}
+
+/* ---------- header ---------- */
+
+.page-head {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 26px;
+}
+
+.mark {
+  display: flex;
+  flex: none;
+  margin-top: 3px;
+  color: var(--accent);
+}
+
+.mark svg {
+  width: 26px;
+  height: 26px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  font-size: 21px;
+  font-weight: 600;
+}
+
+.lede {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-secondary);
+}
+
+/* ---------- 卡片 ---------- */
+
+.card {
+  margin-bottom: 16px;
+  padding: 18px 20px 20px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.card h2 {
+  margin: 0 0 4px;
+  font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.hint {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--fg-secondary);
+}
+
+.hint--tight {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--fg-tertiary);
+}
+
+/* ---------- 字段 ---------- */
+
+.field {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.field:last-of-type {
+  margin-bottom: 0;
+}
+
+.field > label {
+  font-size: 13px;
+  color: var(--fg-secondary);
+}
+
+.field-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* Fluent 输入框：底部有一条 accent 下划线在聚焦时出现 */
+.control {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--stroke-strong);
+  border-bottom-width: 1px;
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--card);
+  font-variant-numeric: tabular-nums;
+  transition: border-color 120ms ease;
+}
+
+.control:hover {
+  border-color: var(--fg-tertiary);
+}
+
+.control:focus {
+  outline: none;
+  border-color: var(--stroke-strong);
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 5px;
+}
+
+select.control {
+  cursor: pointer;
+}
+
+/* ---------- 复选框 ---------- */
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ---------- 按钮 ---------- */
+
+.btn {
+  flex: none;
+  padding: 6px 16px;
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--card);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: var(--fg-tertiary);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn--primary {
+  border-color: transparent;
+  color: #fff;
+  background: var(--accent);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: transparent;
+}
+
+/* ---------- 结果提示 ---------- */
+
+.card-actions,
+.submit-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.card-actions {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--stroke);
+}
+
+.submit-row {
+  margin-top: 4px;
+}
+
+.result {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg-secondary);
+}
+
+.result[data-state="ok"] {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.result[data-state="error"] {
+  color: var(--danger);
+}

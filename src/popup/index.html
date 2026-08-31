@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>LostProxy</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <header class="header">
+        <span class="mark" aria-hidden="true">
+          <!-- 盾牌 + 内部分叉：一个入口、两条出口，正是本产品的语义 -->
+          <svg viewBox="0 0 20 20" fill="none">
+            <path
+              d="M10 2 4 4.2v5c0 3.6 2.5 6.8 6 7.6 3.5-.8 6-4 6-7.6v-5L10 2Z"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M10 6.4v3m0 0L7.6 12m2.4-2.6L12.4 12"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linecap="round"
+            />
+          </svg>
+        </span>
+        <h1 class="brand" data-i18n="common.brand">LostProxy</h1>
+        <!-- 必须始终醒目：避免用户误以为整个系统已进入代理（技术方案 §13） -->
+        <span class="badge" data-i18n="popup.scopeBadge"></span>
+      </header>
+
+      <!-- 主状态卡片。data-on 驱动 accent 反馈，让"开没开"在余光里就能看出来。
+           data-loading 期间旋钮居中变淡 —— 状态未知时不假装"关着"。 -->
+      <section class="card" id="proxy-card" data-on="false" data-loading="true">
+        <div class="card-main">
+          <div class="card-text">
+            <span class="card-label" data-i18n="popup.proxyLabel"></span>
+            <span class="card-value" id="proxy-target">—</span>
+          </div>
+          <button
+            type="button"
+            id="toggle"
+            class="switch"
+            role="switch"
+            aria-checked="false"
+            disabled
+          >
+            <span class="switch-knob"></span>
+          </button>
+        </div>
+      </section>
+
+      <!--
+        告警分两级：
+          warn   = 当前状态类问题，会随状态自行变化或自愈
+          danger = 疑似已泄漏真实 IP，不自动消失，必须用户 Dismiss 确认
+      -->
+      <section class="alert" id="alert" data-severity="warn" hidden>
+        <span class="alert-icon" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none">
+            <path
+              d="M8 5.6v3.2M8 11.2h.01M6.8 2.4 1.5 12.2a1 1 0 0 0 .87 1.5h11.26a1 1 0 0 0 .87-1.5L9.2 2.4a1.37 1.37 0 0 0-2.4 0Z"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </span>
+        <div class="alert-body">
+          <p class="alert-text" id="alert-text"></p>
+          <button type="button" id="dismiss" class="alert-dismiss" data-i18n="common.dismiss" hidden></button>
+        </div>
+      </section>
+
+      <section class="core">
+        <div class="core-row">
+          <span class="dot" id="core-dot" data-state="unknown"></span>
+          <span id="core-text" data-i18n="popup.coreChecking"></span>
+        </div>
+        <!--
+          仅在 Controller 不可观测时出现。这不是故障提示而是解释——
+          客户端可能刻意只开 named pipe（更安全），此时代理照常工作。
+        -->
+        <p class="core-note" id="core-note" data-i18n="popup.coreNote" hidden></p>
+      </section>
+
+      <dl class="facts">
+        <dt data-i18n="popup.modeLabel"></dt>
+        <dd id="mode-text">—</dd>
+        <dt data-i18n="popup.webrtcLabel"></dt>
+        <dd id="webrtc-text">—</dd>
+      </dl>
+
+      <!-- 产品承诺的一部分，任何时候都不该消失（技术方案 §13） -->
+      <footer class="footer">
+        <p class="promises">
+          <span data-i18n="popup.systemProxy"></span>
+          <strong data-i18n="common.notModified"></strong>
+          <span class="sep">·</span>
+          <span data-i18n="popup.tun"></span>
+          <strong data-i18n="common.notModified"></strong>
+        </p>
+        <button type="button" id="open-settings" class="ghost-btn">
+          <span aria-hidden="true">
+            <svg viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="2.1" stroke="currentColor" stroke-width="1.3" />
+              <path
+                d="M8 1.8v1.4M8 12.8v1.4M3.6 3.6l1 1M11.4 11.4l1 1M1.8 8h1.4M12.8 8h1.4M3.6 12.4l1-1M11.4 4.6l1-1"
+                stroke="currentColor"
+                stroke-width="1.3"
+                stroke-linecap="round"
+              />
+            </svg>
+          </span>
+          <span data-i18n="common.settings"></span>
+        </button>
+      </footer>
+    </main>
+    <script type="module" src="./popup.ts"></script>
+  </body>
+</html>

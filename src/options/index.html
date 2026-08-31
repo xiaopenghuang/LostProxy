@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>LostProxy</title>
+    <link rel="stylesheet" href="./options.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-head">
+        <span class="mark" aria-hidden="true">
+          <svg viewBox="0 0 20 20" fill="none">
+            <path
+              d="M10 2 4 4.2v5c0 3.6 2.5 6.8 6 7.6 3.5-.8 6-4 6-7.6v-5L10 2Z"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M10 6.4v3m0 0L7.6 12m2.4-2.6L12.4 12"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linecap="round"
+            />
+          </svg>
+        </span>
+        <div>
+          <h1 data-i18n="options.title"></h1>
+          <p class="lede" data-i18n="options.lede"></p>
+        </div>
+      </header>
+
+      <form id="form" novalidate>
+        <!-- 语言放最前面：用户打开设置页最可能想做的第一件事就是切语言 -->
+        <section class="card">
+          <h2 data-i18n="options.groupLanguage"></h2>
+          <div class="field">
+            <label for="language" data-i18n="options.languageLabel"></label>
+            <select id="language" class="control"></select>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2 data-i18n="options.groupProxy"></h2>
+          <p class="hint" data-i18n="options.proxyHint"></p>
+          <div class="field">
+            <label for="proxy-host" data-i18n="options.proxyHost"></label>
+            <input id="proxy-host" class="control" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="proxy-port" data-i18n="options.proxyPort"></label>
+            <input id="proxy-port" class="control" type="number" min="1" max="65535" step="1" />
+          </div>
+        </section>
+
+        <section class="card">
+          <h2 data-i18n="options.groupController"></h2>
+          <p class="hint" data-i18n="options.controllerHint"></p>
+          <div class="field">
+            <label for="controller-host" data-i18n="options.controllerHost"></label>
+            <input
+              id="controller-host"
+              class="control"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field">
+            <label for="controller-port" data-i18n="options.controllerPort"></label>
+            <input id="controller-port" class="control" type="number" min="1" max="65535" step="1" />
+          </div>
+          <div class="field">
+            <label for="controller-secret" data-i18n="options.controllerSecret"></label>
+            <div class="field-row">
+              <!-- type=password 且从不回显已保存的值（security.md §2.1） -->
+              <input id="controller-secret" class="control" type="password" autocomplete="off" />
+              <button type="button" id="clear-secret" class="btn" data-i18n="common.clear" hidden></button>
+            </div>
+          </div>
+          <p class="hint hint--tight" id="secret-hint"></p>
+          <div class="card-actions">
+            <button type="button" id="test-core" class="btn" data-i18n="options.testCore"></button>
+            <span class="result" id="test-result"></span>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2 data-i18n="options.groupLeak"></h2>
+          <label class="check">
+            <input id="webrtc-lock" type="checkbox" />
+            <span data-i18n="options.webrtcLockLabel"></span>
+          </label>
+          <p class="hint" data-i18n="options.webrtcLockHint"></p>
+        </section>
+
+        <div class="submit-row">
+          <button type="submit" id="save" class="btn btn--primary" data-i18n="common.save"></button>
+          <span class="result" id="save-result"></span>
+        </div>
+      </form>
+    </main>
+    <script type="module" src="./options.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,442 @@
+/* LostProxy Popup —— Fluent Design (Windows 11 / Edge 视觉语言)。
+   布局对应技术方案 §13 的线框图。
+
+   设计取向：让插件看起来像 Edge 自带的功能，而不是一个贴上去的第三方面板。
+   具体手段是遵循 Fluent 的三件事——分层的表面（surface elevation）、
+   统一的圆角语言、以及用 accent 色而非饱和色块来传达状态。 */
+
+:root {
+  color-scheme: light dark;
+
+  /* Fluent 2 brand */
+  --accent: #0f6cbd;
+  --accent-hover: #115ea3;
+  --accent-soft: rgba(15, 108, 189, 0.09);
+
+  /* 语义色 */
+  --ok: #0e700e;
+  --danger: #c50f1f;
+  --warn: #bc4b09;
+
+  /* 表面分层：page < card。Fluent 的层次靠亮度差 + 极轻边框，不靠重阴影 */
+  --page: #f3f3f3;
+  --card: #ffffff;
+  --card-hover: #fafafa;
+  --stroke: rgba(0, 0, 0, 0.0578);
+  --stroke-strong: rgba(0, 0, 0, 0.1);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 0 1px rgba(0, 0, 0, 0.04);
+
+  /* 文本 */
+  --fg: #1b1b1b;
+  --fg-secondary: #616161;
+  --fg-tertiary: #8a8a8a;
+
+  /* 控件 */
+  --switch-off: rgba(0, 0, 0, 0.35);
+  --switch-off-fill: transparent;
+
+  --radius-card: 8px;
+  --radius-control: 5px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #479ef5;
+    --accent-hover: #62abf5;
+    --accent-soft: rgba(71, 158, 245, 0.14);
+
+    --ok: #54b054;
+    --danger: #ff99a4;
+    --warn: #fbbc7f;
+
+    --page: #202020;
+    --card: #2b2b2b;
+    --card-hover: #323232;
+    --stroke: rgba(255, 255, 255, 0.0837);
+    --stroke-strong: rgba(255, 255, 255, 0.14);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+
+    --fg: #ffffff;
+    --fg-secondary: #cfcfcf;
+    --fg-tertiary: #9a9a9a;
+
+    --switch-off: rgba(255, 255, 255, 0.55);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+  🔴 必需，不是保险起见。
+  HTML 的 hidden 属性依赖浏览器默认样式表里的 `[hidden]{display:none}`，
+  而那条规则的优先级低于任何作者样式。本文件里 .alert 声明了 display:flex，
+  于是 `element.hidden = true` 形同虚设 —— 告警框会永远显示，
+  没有错误时就是一个空的橙色框加一个孤零零的感叹号（真实踩过）。
+  用 !important 一次性覆盖所有用到 hidden 的元素。
+*/
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  width: 312px;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--page);
+  -webkit-font-smoothing: antialiased;
+}
+
+.panel {
+  padding: 14px;
+}
+
+/* ---------- header ---------- */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px 12px;
+}
+
+.mark {
+  display: flex;
+  color: var(--accent);
+}
+
+.mark svg {
+  width: 20px;
+  height: 20px;
+}
+
+.brand {
+  flex: 1;
+  margin: 0;
+  font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  white-space: nowrap;
+}
+
+/* ---------- 主状态卡片 ---------- */
+
+.card {
+  padding: 12px 13px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+/* ON 时用 accent 描边 + 极淡底色。Fluent 的做法是「暗示」而非「涂满」 */
+.card[data-on="true"] {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--stroke));
+  background: linear-gradient(0deg, var(--accent-soft), var(--accent-soft)), var(--card);
+}
+
+.card-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.card-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.card-value {
+  font-size: 12px;
+  color: var(--fg-secondary);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ---------- Fluent 开关 ---------- */
+
+.switch {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--switch-off);
+  border-radius: 999px;
+  background: var(--switch-off-fill);
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.switch[aria-checked="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.switch:hover:not(:disabled) {
+  border-color: var(--fg);
+}
+
+.switch[aria-checked="true"]:hover:not(:disabled) {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+}
+
+.switch:disabled {
+  opacity: 0.45;
+  cursor: progress;
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 2px;
+}
+
+.switch-knob {
+  position: absolute;
+  top: 50%;
+  left: 4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--fg);
+  transform: translateY(-50%);
+  transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1), width 140ms ease, height 140ms ease;
+}
+
+.switch[aria-checked="true"] .switch-knob {
+  background: #fff;
+  transform: translate(20px, -50%);
+}
+
+/* 按下时旋钮微微拉伸 —— Windows 11 开关的标志性反馈 */
+.switch:active:not(:disabled) .switch-knob {
+  width: 14px;
+  height: 14px;
+}
+
+/*
+  状态未知（首次拉取中）：旋钮停在中间并变淡。
+  刻意不让它停在"关"的位置 —— 如果代理其实是开着的，
+  那零点几秒里 UI 就在撒谎。本项目的原则是绝不显示假状态（§22 Case 3），
+  这条原则也适用于加载中的那一瞬间。
+*/
+.card[data-loading="true"] .switch-knob {
+  transform: translate(10px, -50%);
+  opacity: 0.45;
+}
+
+.card[data-loading="true"] .card-value {
+  opacity: 0.5;
+}
+
+/* ---------- 告警 ---------- */
+
+.alert {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--warn) 34%, transparent);
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--warn) 9%, var(--card));
+}
+
+.alert[data-severity="danger"] {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, var(--card));
+}
+
+.alert-icon {
+  display: flex;
+  flex: none;
+  margin-top: 1px;
+  color: var(--warn);
+}
+
+.alert[data-severity="danger"] .alert-icon {
+  color: var(--danger);
+}
+
+.alert-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.alert-body {
+  min-width: 0;
+}
+
+.alert-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.alert-dismiss {
+  margin-top: 7px;
+  padding: 3px 10px;
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--card);
+  cursor: pointer;
+}
+
+.alert-dismiss:hover {
+  background: var(--card-hover);
+  border-color: var(--fg-tertiary);
+}
+
+/* ---------- Core 状态 ---------- */
+
+.core {
+  margin-top: 12px;
+  padding: 0 3px;
+}
+
+.core-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+}
+
+/* dot 三态。unknown（灰）刻意与 offline（红）区分：
+   「读不到 Core 状态」不是故障，不该染成告警色（ADR-23） */
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-tertiary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--fg-tertiary) 16%, transparent);
+}
+
+.dot[data-state="online"] {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);
+}
+
+.dot[data-state="offline"] {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+.core-note {
+  margin: 7px 0 0 15px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-tertiary);
+}
+
+/* ---------- 事实列表 ---------- */
+
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  margin: 12px 0 0;
+  padding: 11px 13px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  font-size: 12px;
+}
+
+.facts dt {
+  color: var(--fg-secondary);
+}
+
+.facts dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 600;
+}
+
+/* ---------- footer ---------- */
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 11px 3px 0;
+  border-top: 1px solid var(--stroke);
+}
+
+.promises {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--fg-tertiary);
+}
+
+.promises strong {
+  color: var(--fg-secondary);
+  font-weight: 600;
+}
+
+.promises .sep {
+  margin: 0 3px;
+  opacity: 0.5;
+}
+
+.ghost-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  background: none;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.ghost-btn svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.ghost-btn:hover {
+  color: var(--fg);
+  background: var(--card);
+  border-color: var(--stroke);
+}
+
+.ghost-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

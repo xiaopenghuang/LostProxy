@@ -1,0 +1,29 @@
+# 依赖与产物
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 本地环境
+*.local
+.env
+.env.*
+!.env.example
+
+# 敏感凭据 —— 对应技术方案 §20 / §21.4：
+# 机场订阅 URL 与 Mihomo API Secret 属于敏感凭据，禁止进入 Git。
+# 真实值只允许存在于 chrome.storage.local 或用户本机配置文件中。
+*secret*
+*Secret*
+*subscription*
+*订阅*
+mihomo-config.yaml
+config.yaml
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 设计文档保留在本地，不随仓库发布
+docs/

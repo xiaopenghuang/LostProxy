@@ -1,0 +1,54 @@
+{
+  // TypeScript 7 (native/Go compiler) 配置。
+  //
+  // 注意 TS 7 的两个新默认值，本项目必须显式覆盖，否则会静默出错：
+  //   1. `types` 默认为 []（TS 6 及以前是自动包含 node_modules/@types 下全部包）。
+  //      不显式写 ["chrome"]，`chrome.proxy` 等全局命名空间就完全不存在。
+  //   2. `strict` / `module: esnext` / `stableTypeOrdering` 默认已开启，此处显式写出仅为可读性。
+  //
+  // 同时避开 TS 7 已移除（硬错误、编译器拒绝启动）的选项：
+  //   baseUrl / target:es5 / moduleResolution:node|node10|classic / module:amd|umd|systemjs|none
+  //   downlevelIteration / esModuleInterop:false / alwaysStrict:false
+  //
+  // 本项目不让 tsc 产出 JS（noEmit），转译与打包全部交给 Vite/Rolldown，
+  // 因此也绕开了 TS 7 emit pipeline 尚未完全补齐的部分。
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+
+    // Chrome Extension API 类型。TS 7 下这一行是必需的，不是可选优化。
+    //
+    // 为什么把 "node" 也放进来（而不是拆成 tsconfig.app / tsconfig.node）？
+    //   vite.config.ts / vite.config.sw.ts / vitest.config.ts 跑在 Node 上，
+    //   需要 node:path、node:fs/promises 与 import.meta.dirname 的类型。
+    //   TS 7 的 project references 在多项目编排上仍有已知缺口，
+    //   而本项目规模很小，单一 tsconfig 的收益（简单、可预测）大于
+    //   "src/ 里能看见 Node 全局" 这点代价。
+    //   约束靠约定守住：src/ 下禁止使用任何 Node API。
+    "types": ["chrome", "node"],
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+
+    // 打包器友好：强制 `import type`，避免类型 import 被误当成运行时副作用。
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+
+    // 强制把每个文件都视为 ES 模块，而不是 "无 import/export 就当全局脚本"。
+    // 不设这一项时，TS 的 auto 判定会把 popup.ts / options.ts 这类
+    // 暂时没有 import 的文件丢进同一个全局作用域，导致：
+    //   1. 顶层 const 与 DOM 全局撞名（例如 `status` 即 window.status: string）
+    //   2. 两个入口文件之间的同名顶层变量互相冲突
+    // 本项目所有文件都由 Vite/Rolldown 当模块处理，force 才是与运行时一致的语义。
+    "moduleDetection": "force",
+
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src", "tests", "vite.config.ts", "vite.config.sw.ts", "vitest.config.ts"]
+}
