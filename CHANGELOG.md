@@ -8,6 +8,61 @@ Each version section below is extracted by `.github/workflows/release.yml` and b
 
 ---
 
+## v0.3.0
+
+延迟显示、智能分流、订阅刷新、端口自动探测，以及两个界面的重排。
+Latency display, rule-based routing, subscription refresh, port detection, and a rebuild of both UIs.
+
+### 新功能 / New
+
+- **节点延迟**：节点列表直接显示延迟，打开 Popup 时**不产生任何额外请求** ——
+  数据来自内核自己健康检查产生的记录。测速只在你点「测速」时才发，
+  且用组测速让内核并发处理。
+  **Node latency** shown in the list at no extra request — the data comes from the core's own
+  health checks. Explicit testing happens only on demand.
+- **智能分流**：全局 / 智能 / 直连三档。智能模式下直连清单里的域名绕过代理，
+  其余走代理。清单支持通配符（`*.edu.cn`）与中文域名（自动转 Punycode）。
+  **Rule-based routing**: global / smart / direct. In smart mode the hosts you list bypass the
+  proxy. Wildcards and internationalised domains are both supported.
+- **订阅刷新**：列出内核里的订阅并一键更新。增删做不到 ——
+  内核刻意不通过 API 开放配置文件写入，请在客户端里操作。
+  **Subscription refresh**: list and refresh. Adding and removing are not possible; the core
+  deliberately does not expose config writes over its API.
+- **端口自动探测**：Settings 里一键探测 Controller 端口。「端口填错」是实测最常见的
+  失败原因，而它的症状完全不指向真实原因。只试已知客户端的公开默认值，
+  探到了只填进输入框、不自动保存。
+  **Port detection** for the controller, since a wrong port was the most common real failure and
+  its symptoms point nowhere near the cause. It fills the field rather than saving.
+
+### 界面 / UI
+
+- Popup 加宽到 380px 并分「状态 / 节点」两个标签。**开关、告警、
+  「系统代理未修改」那两行承诺留在标签容器之外** —— 切标签不该让你
+  看不到代理开没开，也不该把安全告警藏进未选中的标签。
+  The popup gains tabs; the toggle, alerts and the untouched-system promises stay outside them.
+- Settings 加宽到 920px、卡片两列、加了分组标题，保存栏固定在底部并提示
+  「有改动尚未保存」。原来保存按钮在七张卡片之后，全标签页打开时在首屏之外。
+  Settings gets a two-column grid and a fixed save bar; previously Save sat off-screen below
+  seven cards with nothing indicating unsaved changes.
+- 视觉设计由 Master 完成。此方只补了 `prefers-reduced-motion` ——
+  唯一带动画的元素是告警框，而它可能显示「疑似已泄漏真实 IP」，
+  对开启该设置的用户，动画期间那句话是读不清的。
+  Visual design is Master's. Added `prefers-reduced-motion`: the one animated element is the
+  alert, which may carry a leak warning.
+
+### 修复 / Fixed
+
+三个 bug 全部由真机测试发现，自动化测试当时是绿的：
+
+- 🔴 **假 ON**：智能模式期望 PAC 但浏览器实际停在 `fixed_servers` 时，
+  状态比对会穿透并误报"一致"—— UI 显示分流已生效，实际全部流量走代理。
+  A false "consistent" report let smart mode look active while everything went through the proxy.
+- 🔴 生成的 PAC 脚本含中文注释，被 Chromium 以「只接受 ASCII」拒绝整个写入。
+  The generated PAC carried non-ASCII comments, so Chromium rejected the write outright.
+- 🔴 `new URL()` 静默丢弃路径，使带路径的规则被当成整域直连 ——
+  比用户要求的更多流量绕过代理。
+  Paths were silently dropped, widening a rule's scope beyond what was asked for.
+
 ## v0.2.0
 
 在插件里直接切换 Mihomo 节点，不用打开 Clash Verge。
