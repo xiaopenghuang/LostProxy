@@ -69,12 +69,14 @@ jobs:
         with:
           subject-path: ${{ steps.pkg.outputs.path }}
 
+      # CHANGELOG 里没有对应小节就在这里失败，而不是发出一个说明里
+      # 写着 __CHANGES__ 的 Release。
       - name: Compose release notes
         run: |
-          sed -e "s/__VERSION__/${{ steps.pkg.outputs.version }}/g" \
-              -e "s/__SHA256__/${{ steps.pkg.outputs.sha256 }}/g" \
-              -e "s/__COMMIT__/${{ github.sha }}/g" \
-              .github/release-notes.md > /tmp/notes.md
+          node scripts/compose-notes.mjs \
+            "${{ steps.pkg.outputs.version }}" \
+            "${{ steps.pkg.outputs.sha256 }}" \
+            "${{ github.sha }}" > /tmp/notes.md
           echo "--- composed notes ---"
           cat /tmp/notes.md
 

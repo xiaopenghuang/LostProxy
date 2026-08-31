@@ -54,6 +54,10 @@ gh attestation verify lostproxy-v__VERSION__.zip --repo xiaopenghuang/LostProxy
 代理工具值得做这一步。也可以 `npm ci && npm run package` 自己从源码构建。
 Worth doing for a proxy tool. You can also build it yourself with `npm ci && npm run package`.
 
+## 本次变更 / What changed
+
+__CHANGES__
+
 ## 这个版本做了什么 / What it does
 
 - **作用域限于本浏览器** — 只写 `chrome.proxy`，不改 Windows 系统代理、不写注册表、不开 TUN、

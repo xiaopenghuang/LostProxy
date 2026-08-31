@@ -1,6 +1,6 @@
 {
   "name": "lostproxy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Browser-scoped proxy manager for Microsoft Edge (Manifest V3). Routes only this browser through a local Mihomo/Clash core, without touching Windows system proxy, TUN or the routing table.",
