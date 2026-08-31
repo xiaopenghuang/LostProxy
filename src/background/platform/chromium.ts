@@ -14,8 +14,8 @@
 import { errors } from '../../shared/errors'
 import { LOOPBACK_HOSTS } from '../../shared/constants'
 import type { NormalizedError, Settings } from '../../shared/types'
-import { buildPacScript, sanitizeRules } from '../pac'
-import type { BrowserPlatform, ProxyInspection, WebRtcInspection } from './types'
+import { buildPacScript, needsRuleBasedRouting } from '../pac'
+import type { BrowserPlatform, PlatformBlocker, ProxyInspection, WebRtcInspection } from './types'
 
 // ---------------------------------------------------------------------------
 // Chromium 特有的常量
@@ -115,7 +115,7 @@ export function buildProxyConfig(settings: Settings): chrome.proxy.ProxyConfig {
    * PAC 脚本。两者网络行为一致，但 fixed_servers 是更简单、更可预测的那条路径，
    * 且不必让每个请求都执行一次 JS。
    */
-  if (settings.routingMode === 'smart' && sanitizeRules(settings.directRules).length > 0) {
+  if (needsRuleBasedRouting(settings)) {
     return {
       mode: 'pac_script',
       pacScript: {
@@ -225,6 +225,21 @@ export function normalizeProxyError(details: chrome.proxy.ErrorDetails): Normali
  */
 export const chromium: BrowserPlatform = {
   id: 'chromium',
+
+  /**
+   * Chromium 没有任何写入前置条件。
+   *
+   * 内联 PAC 原生支持（所以规则分流可用），也不需要额外的用户授权 ——
+   * `"proxy"` 权限在安装时就一次性给了，incognito 由 `scope: 'regular'`
+   * 自动覆盖（ADR-07）。
+   *
+   * 刻意保留这个空实现而不把 `preflight` 做成可选方法：可选方法会让
+   * 调用方写成 `platform.preflight?.(s)`，而那种写法在**新增一个平台
+   * 忘了实现它**时完全静默 —— 恰好是这一层最不该有的失败方式。
+   */
+  async preflight(): Promise<PlatformBlocker | null> {
+    return null
+  },
 
   async readProxyState(expected: Settings): Promise<ProxyInspection> {
     // 失败时**抛错**，由共享层决定降级成 'unknown'（见 types.ts 的错误约定）。

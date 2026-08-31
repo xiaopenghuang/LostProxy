@@ -1,6 +1,7 @@
 # 依赖与产物
 node_modules/
 dist/
+dist-firefox/
 *.tsbuildinfo
 
 # 本地环境

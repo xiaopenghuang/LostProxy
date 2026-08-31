@@ -53,21 +53,58 @@ jobs:
         id: pkg
         run: npm run package
 
-      - name: Verify archive
+      - name: Verify archives
         run: |
-          unzip -t "${{ steps.pkg.outputs.path }}"
-          mkdir -p /tmp/check
-          unzip -q "${{ steps.pkg.outputs.path }}" -d /tmp/check
-          diff -r dist /tmp/check --exclude=LICENSE
-          test -f /tmp/check/manifest.json
-          echo "archive verified"
+          set -euo pipefail
+          check() {
+            local zip="$1" src="$2" out="$3"
+            unzip -t "$zip"
+            mkdir -p "$out"
+            unzip -q "$zip" -d "$out"
+            diff -r "$src" "$out" --exclude=LICENSE
+            test -f "$out/manifest.json"
+            echo "verified $zip against $src"
+          }
+          check "${{ steps.pkg.outputs.path }}" dist /tmp/check-chromium
+          check "${{ steps.pkg.outputs.firefox_path }}" dist-firefox /tmp/check-firefox
+
+      # 🔴 两个包必须各含自己平台的代码，不得串台。
+      #
+      # 这一条守的是本项目最危险的跨平台差异：Firefox 上
+      # `disable_non_proxied_udp` 会被接受、不报错，但泄漏防护比
+      # `proxy_only` 弱（Bugzilla 1452713）。若构建期的平台常量失效，
+      # 两个包会装同一份 Chromium 实现，而 Firefox 用户拿到的
+      # WebRTC 防护会静默降级。
+      #
+      # tests/platform-boundary.test.ts 已经在断言同一件事，这里再查一遍
+      # 是因为**发布出去的是 zip 里的东西**：测试验的是 dist/，
+      # 而打包与上传之间还有几步。一个已发布的错误产物没法撤回。
+      - name: Verify platform separation in the published bundles
+        run: |
+          set -euo pipefail
+          forbid() {
+            if grep -q "$2" "$1"; then
+              echo "::error::$1 里出现了不该有的 $2 —— 构建期平台分离失效"
+              exit 1
+            fi
+          }
+          forbid /tmp/check-chromium/background.js proxy_only
+          forbid /tmp/check-chromium/background.js httpProxyAll
+          forbid /tmp/check-firefox/background.js disable_non_proxied_udp
+          forbid /tmp/check-firefox/background.js fixed_servers
+          echo "platform separation verified in both archives"
 
       # 把「这个文件由这个仓库的这个 commit 在这次公开可查的构建中产出」
       # 签成可验证的声明。代理类工具值得有这个。
+      #
+      # 两个包都要签 —— 只签一个会让另一个看起来"来源不明"，
+      # 而用户没有理由认为 Firefox 版比 Chromium 版更不值得验证。
       - name: Attest build provenance
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
-          subject-path: ${{ steps.pkg.outputs.path }}
+          subject-path: |
+            ${{ steps.pkg.outputs.path }}
+            ${{ steps.pkg.outputs.firefox_path }}
 
       # CHANGELOG 里没有对应小节就在这里失败，而不是发出一个说明里
       # 写着 __CHANGES__ 的 Release。
@@ -76,6 +113,7 @@ jobs:
           node scripts/compose-notes.mjs \
             "${{ steps.pkg.outputs.version }}" \
             "${{ steps.pkg.outputs.sha256 }}" \
+            "${{ steps.pkg.outputs.firefox_sha256 }}" \
             "${{ github.sha }}" > /tmp/notes.md
           echo "--- composed notes ---"
           cat /tmp/notes.md
@@ -88,8 +126,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" \
-            "${{ steps.pkg.outputs.path }}#LostProxy ${{ github.ref_name }} (unpacked extension, load via edge://extensions)" \
-            "${{ steps.pkg.outputs.path }}.sha256#SHA-256 checksum" \
+            "${{ steps.pkg.outputs.path }}#Edge / Chrome — ${{ github.ref_name }} (unpacked extension, load via edge://extensions)" \
+            "${{ steps.pkg.outputs.path }}.sha256#SHA-256 checksum (Edge / Chrome)" \
+            "${{ steps.pkg.outputs.firefox_path }}#Firefox — ${{ github.ref_name }} (load via about:debugging, needs private-window access)" \
+            "${{ steps.pkg.outputs.firefox_path }}.sha256#SHA-256 checksum (Firefox)" \
             --title "${{ github.ref_name }} — 只让这一个浏览器走代理 / Proxy this browser only" \
             --notes-file /tmp/notes.md \
             --latest
@@ -99,7 +139,9 @@ jobs:
         run: |
           echo "### Dry run — 没有创建 Release" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- 产物 \`${{ steps.pkg.outputs.name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- SHA-256 \`${{ steps.pkg.outputs.sha256 }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Edge / Chrome \`${{ steps.pkg.outputs.name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "  - SHA-256 \`${{ steps.pkg.outputs.sha256 }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Firefox \`${{ steps.pkg.outputs.firefox_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "  - SHA-256 \`${{ steps.pkg.outputs.firefox_sha256 }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "推一个 \`v*\` tag 才会真正发布。" >> $GITHUB_STEP_SUMMARY

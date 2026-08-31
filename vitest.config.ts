@@ -20,6 +20,23 @@
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
+  /*
+   * 测试跑在 Chromium 平台上（ADR-36）。
+   *
+   * 🔴 为什么默认是 chromium 而不是随机挑一个：`tests/setup.ts` 里的
+   *   chrome.* mock 是**按 Chromium 的形状**写的（ChromeSetting 带 scope、
+   *   onProxyError 带 fatal）。让共享层的测试跑在 Chromium 平台上，
+   *   意味着那些断言验的是「决策 + 一个真实存在的平台实现」的组合，
+   *   而不是一个人造的假平台 —— 后者能过测试但证明不了任何事。
+   *
+   *   Firefox 侧的实现由 `tests/platform-firefox.test.ts` 覆盖，
+   *   它自己注入 Firefox 形状的 mock 并**直接 import `firefox`**，
+   *   不经由这里的 `platform` 出口。这样两个平台的实现都被测到，
+   *   且不需要在测试里切换全局构建常量（那会让测试之间产生顺序依赖）。
+   */
+  define: {
+    __LOSTPROXY_PLATFORM__: JSON.stringify('chromium'),
+  },
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],

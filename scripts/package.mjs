@@ -14,7 +14,9 @@
  * 这个脚本同时是一道发布闸门，任一条不满足就退出非零：
  *   - git tag / manifest.json / package.json 三处版本号必须一致
  *   - manifest 引用的每个文件都必须真的在包里
- *   - dist/ 必须存在且含 manifest.json
+ *   - 每个平台的产物目录必须存在且含 manifest.json
+ *   - 两个平台的 manifest 版本号必须一致（V0.3 起，见 TARGETS）
+ *   - 每个平台的 background 装载方式必须正确（Firefox 不支持 service worker）
  */
 
 import { deflateRawSync } from 'node:zlib'
@@ -23,8 +25,24 @@ import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSy
 import { resolve, join, relative, posix, sep } from 'node:path'
 
 const ROOT = resolve(import.meta.dirname, '..')
-const DIST = resolve(ROOT, 'dist')
 const OUT_DIR = resolve(ROOT, 'release')
+
+/**
+ * 要打包的平台。
+ *
+ * `suffix` 进文件名：Chromium 那份保持 `lostproxy-v0.3.0.zip` 不变
+ * （已发布的 Release 里就是这个名字，改名会让旧链接与文档失效），
+ * Firefox 那份是 `lostproxy-firefox-v0.3.0.zip`。
+ *
+ * `backgroundKey` 是一道闸门用的期望值：Firefox 不支持扩展 service worker
+ * （Firefox bug 1573659），必须用 `scripts`。写错的症状是"装上去毫无反应"
+ * 而 Firefox 不会给出明显提示 —— 属于下载完才发现的那类失败，
+ * 所以在打包时就拦。
+ */
+const TARGETS = [
+  { id: 'chromium', dir: 'dist', suffix: '', backgroundKey: 'service_worker' },
+  { id: 'firefox', dir: 'dist-firefox', suffix: '-firefox', backgroundKey: 'scripts' },
+]
 
 /* ---------- CRC32（ZIP 每个条目都要，与 PNG 用的是同一个多项式） ---------- */
 
@@ -149,19 +167,83 @@ function gate(ok, message) {
 
 /* ---------- 主流程 ---------- */
 
-if (!existsSync(resolve(DIST, 'manifest.json'))) {
-  console.error('dist/manifest.json 不存在 —— 先跑 npm run build')
-  process.exit(1)
+const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8'))
+
+for (const target of TARGETS) {
+  if (!existsSync(resolve(ROOT, target.dir, 'manifest.json'))) {
+    console.error(`${target.dir}/manifest.json 不存在 —— 先跑 npm run build`)
+    process.exit(1)
+  }
 }
 
-const manifest = JSON.parse(readFileSync(resolve(DIST, 'manifest.json'), 'utf8'))
-const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8'))
-const version = manifest.version
+mkdirSync(OUT_DIR, { recursive: true })
 
-gate(
-  manifest.version === pkg.version,
-  `版本号不一致：manifest.json=${manifest.version} package.json=${pkg.version}`,
-)
+/** 打一个平台的包，返回它的 manifest 版本号供跨平台一致性校验。 */
+function packageTarget(target) {
+  const dist = resolve(ROOT, target.dir)
+  const manifest = JSON.parse(readFileSync(resolve(dist, 'manifest.json'), 'utf8'))
+  const version = manifest.version
+
+  gate(
+    manifest.version === pkg.version,
+    `${target.id} 版本号不一致：manifest=${manifest.version} package.json=${pkg.version}`,
+  )
+
+  /*
+   * background 装载方式。这道闸门专门拦一种低级但后果不小的错误：
+   * 给 Firefox 配了 service_worker（它不支持，Firefox bug 1573659），
+   * 或给 Chromium 配了 scripts（MV3 下被忽略）。
+   * 两种情况都是"装上去毫无反应"，而浏览器不给明显提示。
+   */
+  gate(
+    manifest.background?.[target.backgroundKey] !== undefined,
+    `${target.id} 的 manifest 缺 background.${target.backgroundKey}`,
+  )
+
+  const files = walk(dist)
+  const entries = files.map((name) => ({ name, data: readFileSync(resolve(dist, name)) }))
+
+  // MIT 要求许可证随「所有副本」分发，所以 LICENSE 一并进包。
+  entries.push({ name: 'LICENSE', data: readFileSync(resolve(ROOT, 'LICENSE')) })
+  entries.sort((a, b) => (a.name < b.name ? -1 : 1))
+
+  // manifest 引用的每个文件都必须在包里。少一个图标就是「装上去图标是空白」，
+  // 少 background.js 就是「装上去直接报错」，都属于下载完才发现的那类失败。
+  const present = new Set(entries.map((e) => e.name))
+  const refs = new Set()
+  const collect = (v) => {
+    if (typeof v === 'string' && /\.(js|html|png|css|json)$/.test(v)) refs.add(v)
+    else if (v && typeof v === 'object') Object.values(v).forEach(collect)
+  }
+  collect(manifest)
+  for (const r of [...refs].sort()) {
+    gate(present.has(r), `${target.id}: manifest 引用了包里不存在的文件：${r}`)
+  }
+
+  const zip = buildZip(entries)
+  const name = `lostproxy${target.suffix}-v${version}.zip`
+  const outPath = resolve(OUT_DIR, name)
+  writeFileSync(outPath, zip)
+
+  const sha = createHash('sha256').update(zip).digest('hex')
+  writeFileSync(resolve(OUT_DIR, `${name}.sha256`), `${sha}  ${name}\n`)
+
+  return { ...target, version, name, outPath, sha, size: zip.length, entries: entries.length, refs: refs.size }
+}
+
+const built = TARGETS.map(packageTarget)
+
+/*
+ * 两个平台的版本号必须一致。
+ *
+ * 它们来自两个不同的源文件（src/manifest.json 与 src/manifest.firefox.json），
+ * 所以「改了一个忘了改另一个」是完全可能的 —— 而症状是同一个 Release 里
+ * 两个包版本不同，用户无从判断哪个是新的。
+ */
+const versions = new Set(built.map((b) => b.version))
+gate([...versions].length === 1, `两个平台的 manifest 版本不一致：${[...versions].join(' vs ')}`)
+
+const version = built[0].version
 
 // CI 里由 tag 触发时校验第三处。GITHUB_REF_NAME 形如 "v0.1.0"。
 const refName = process.env.GITHUB_REF_NAME ?? ''
@@ -169,28 +251,9 @@ if (process.env.GITHUB_REF_TYPE === 'tag') {
   gate(
     refName === `v${version}`,
     `git tag 与 manifest 版本不一致：tag=${refName} manifest=v${version}\n` +
-      `    改 src/manifest.json 与 package.json 的 version，或重新打正确的 tag。`,
+      `    改 src/manifest.json、src/manifest.firefox.json 与 package.json 的 version，` +
+      `或重新打正确的 tag。`,
   )
-}
-
-const files = walk(DIST)
-const entries = files.map((name) => ({ name, data: readFileSync(resolve(DIST, name)) }))
-
-// MIT 要求许可证随「所有副本」分发，所以 LICENSE 一并进包。
-entries.push({ name: 'LICENSE', data: readFileSync(resolve(ROOT, 'LICENSE')) })
-entries.sort((a, b) => (a.name < b.name ? -1 : 1))
-
-// manifest 引用的每个文件都必须在包里。少一个图标就是「装上去图标是空白」，
-// 少 background.js 就是「装上去直接报错」，都属于下载完才发现的那类失败。
-const present = new Set(entries.map((e) => e.name))
-const refs = new Set()
-const collect = (v) => {
-  if (typeof v === 'string' && /\.(js|html|png|css|json)$/.test(v)) refs.add(v)
-  else if (v && typeof v === 'object') Object.values(v).forEach(collect)
-}
-collect(manifest)
-for (const r of [...refs].sort()) {
-  gate(present.has(r), `manifest 引用了包里不存在的文件：${r}`)
 }
 
 if (problems.length > 0) {
@@ -198,24 +261,25 @@ if (problems.length > 0) {
   process.exit(1)
 }
 
-const zip = buildZip(entries)
-const name = `lostproxy-v${version}.zip`
-const outPath = resolve(OUT_DIR, name)
-mkdirSync(OUT_DIR, { recursive: true })
-writeFileSync(outPath, zip)
+for (const b of built) {
+  console.log(`${b.name}  ${b.size} bytes  ${b.entries} entries  (${b.refs} refs OK)`)
+  console.log(`sha256  ${b.sha}`)
+}
 
-const sha = createHash('sha256').update(zip).digest('hex')
-writeFileSync(resolve(OUT_DIR, `${name}.sha256`), `${sha}  ${name}\n`)
-
-console.log(`${name}  ${zip.length} bytes  ${entries.length} entries`)
-console.log(`sha256  ${sha}`)
-console.log(`manifest 引用的 ${refs.size} 个文件全部在包内`)
-
-// 供 workflow 后续步骤使用
+// 供 workflow 后续步骤使用。
+//
+// Chromium 那份保留原来的键名（version/name/path/sha256），不加前缀 ——
+// release.yml 已经在用它们，改名会连带改 workflow，而那份改动无法在本地验证。
+// Firefox 用带前缀的新键。
 if (process.env.GITHUB_OUTPUT) {
+  const chromium = built.find((b) => b.id === 'chromium')
+  const firefox = built.find((b) => b.id === 'firefox')
   writeFileSync(
     process.env.GITHUB_OUTPUT,
-    `version=${version}\nname=${name}\npath=${outPath}\nsha256=${sha}\n`,
+    `version=${version}\n` +
+      `name=${chromium.name}\npath=${chromium.outPath}\nsha256=${chromium.sha}\n` +
+      `firefox_name=${firefox.name}\nfirefox_path=${firefox.outPath}\n` +
+      `firefox_sha256=${firefox.sha}\n`,
     { flag: 'a' },
   )
 }

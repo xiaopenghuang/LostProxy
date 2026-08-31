@@ -53,6 +53,23 @@ const EXPECTED_SELF_HEALING: Record<ErrorCode, boolean> = {
    */
   LATENCY_TEST_FAILED: false,
   SUBS_UPDATE_FAILED: false,
+  /*
+   * V0.3 的两个平台前置条件码（ADR-36）—— 都是 false，但理由与上面几组不同，
+   * 值得写清楚，因为它们**确实会**写进 lastError（走 enableProxy 的失败分支）。
+   *
+   * 两者都是「用户改一下就好」的配置/授权问题，不是瞬时故障：
+   *   - PROXY_PRIVATE_BROWSING_REQUIRED：用户去 about:addons 勾一个框；
+   *   - ROUTING_MODE_UNSUPPORTED：用户把分流模式切回全局。
+   *
+   * 让它们自愈是错的方向。自愈的判据是「状态恢复后这条记录还有没有价值」，
+   * 而这两条记录的价值恰恰在于**告诉用户要去做什么**。悄悄清掉的结果是
+   * 用户点了开关、没反应、也没有任何解释 —— 而问题其实两步就能解决。
+   *
+   * 注意这与「代理没开成功」是同一件事的两面：这两个码出现时代理**没有写入**，
+   * 也就是浏览器仍在直连。告警留着是唯一能让用户知道这件事的途径。
+   */
+  PROXY_PRIVATE_BROWSING_REQUIRED: false,
+  ROUTING_MODE_UNSUPPORTED: false,
   UNKNOWN: false,
 }
 

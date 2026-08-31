@@ -148,6 +148,10 @@ const EN = {
     'WebRTC policy is controlled by another extension. LostProxy will not override it.',
   'error.privacyNotControllable':
     'WebRTC policy is controlled by policy and cannot be changed by any extension.',
+  'error.privateBrowsingAccessRequired':
+    'Firefox will not let LostProxy change proxy settings until you allow it to run in private windows. Open about:addons, click LostProxy, and turn on "Run in Private Windows". Proxy settings apply to private and normal windows alike, which is why Firefox asks first.',
+  'error.ruleBasedRoutingUnsupported':
+    'Firefox cannot do rule-based routing in this version of LostProxy: it has no support for inline PAC scripts, so your direct-connection list would be silently ignored. Switch Routing to Global, or put the direct rules in your Mihomo config instead — the core handles them better anyway.',
   'error.proxyBlocked':
     'Cannot reach the local proxy. Your real IP was not exposed — the request was blocked. Check that Mihomo is running and that its mixed-port matches the proxy address shown above.',
   'error.proxyLeakSuspected':
@@ -381,6 +385,10 @@ const ZH: Record<MessageKey, string> = {
   'error.privacyWriteFailed': '写入 WebRTC 策略失败：{reason}',
   'error.privacyControlledByOther': 'WebRTC 策略正被另一个扩展控制，LostProxy 不会强行覆盖。',
   'error.privacyNotControllable': 'WebRTC 策略被策略（Policy）锁定，任何扩展都无法修改。',
+  'error.privateBrowsingAccessRequired':
+    'Firefox 不允许 LostProxy 修改代理设置，除非你允许它在隐私窗口中运行。打开 about:addons，点开 LostProxy，把「在隐私窗口中运行」打开。代理设置对隐私窗口和普通窗口同时生效，所以 Firefox 会先问一次。',
+  'error.ruleBasedRoutingUnsupported':
+    'Firefox 在当前版本的 LostProxy 里无法做规则分流：它不支持内联 PAC 脚本，硬写会让你的直连清单被无声忽略。请把分流模式切回「全局」，或者把这些直连规则写进 Mihomo 配置 —— 内核本来就比浏览器更擅长做这件事。',
   'error.proxyBlocked':
     '连不上本机代理。你的真实 IP 没有泄漏 —— 该请求已被阻止。请确认 Mihomo 正在运行，且它的混合端口与上面显示的代理地址一致。',
   'error.proxyLeakSuspected':

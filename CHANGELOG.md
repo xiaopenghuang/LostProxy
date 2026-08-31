@@ -8,6 +8,63 @@ Each version section below is extracted by `.github/workflows/release.yml` and b
 
 ---
 
+## v0.4.0
+
+Firefox 支持。业务逻辑与界面完全共享，浏览器差异关在一层抽象里。
+Firefox support. All business logic and UI shared; browser differences confined to one layer.
+
+### 新增 / New
+
+- **Firefox 版**（`lostproxy-firefox-v0.4.0.zip`，Firefox 128+）。代理开关、节点切换、
+  延迟测试、订阅刷新、WebRTC 锁全部可用。安装方式与 Chromium 版不同，见 README。
+  **Firefox build** with the proxy toggle, node switching, latency testing, subscription refresh
+  and the WebRTC lock. Installation differs from the Chromium build — see the README.
+- 两个包**不能混用**。Firefox 与 Chromium 的代理 API 完全不同，装错的表现是
+  「装上了但代理压根没生效」而浏览器不报错。Release 页面按浏览器标注了下载。
+  The two archives are **not interchangeable**; the wrong one silently proxies nothing.
+
+### Firefox 版与 Chromium 版的三处行为差异 / Three behavioural differences
+
+- **必须授予「在隐私窗口中运行」。** Firefox 规定代理设置对隐私窗口与普通窗口同时生效，
+  因此不给这个权限就完全不允许扩展改代理。没给时扩展会告诉你去哪儿开，
+  **不会**显示成已开启。反过来说，Chromium 上靠 `scope: 'regular'` 换来的
+  「InPrivate 也走代理」在 Firefox 上是默认行为。
+  **Private-window access is required** — Firefox refuses proxy changes without it. LostProxy says
+  where to enable it instead of showing a false ON.
+- **不支持智能分流。** Firefox 的 `proxy.settings` 只支持 `autoConfigUrl`，没有内联 PAC。
+  用 URL 投递脚本会重新引入「取不到脚本就静默直连」，与本项目的 fail-closed 取向相反。
+  所以开着分流模式时**拒绝开启并说明**，而不是悄悄按全局代理处理 ——
+  后者会让你配的直连清单被无声忽略。把这些规则写进 Mihomo 配置反而更好。
+  **No rule-based routing**: refused with an explanation rather than silently downgraded to global.
+- **运行时错误信号更弱。** Firefox 的 `proxy.onError` 不带 `fatal` 字段，
+  无法区分「请求被拦住了（没泄漏）」与「已经直连出去了（可能泄漏）」。
+  此时报一条可自愈的告警、不对是否泄漏做任何承诺 —— 而不是一律按最坏情况报警，
+  因为那会训练用户点掉这类告警，连真正的泄漏警告一起点掉。
+  **Weaker runtime error signal**: no `fatal` field, so the alert promises nothing either way.
+
+### 内部 / Internals
+
+- 浏览器差异集中到 `src/background/platform/`，由**构建期**常量选择实现，不做运行期嗅探。
+  产物里只有一个平台的代码 —— 这让「Firefox 包里不该出现 `disable_non_proxied_udp`」
+  成为一条可断言的事实，而它守的是本项目最危险的一处差异：自 Firefox 70 起
+  该值在 Firefox 上退化成「有代理才强制」，抄过去会被**接受**、**不报错**、防护**更弱**。
+  这条断言在单元测试与**已解压的发布 zip** 上各验一次。
+- `proxy.ts` / `privacy.ts` 现在零浏览器 API 调用，只剩决策。
+  出现一次 `chrome.` 调用会让测试变红 —— 因为这类错误在 Edge 上完全正常、
+  只在 Firefox 上炸，而开发时手边通常只有一个浏览器。
+- 单元测试 917 → 994 项。新增 Firefox 平台测试 50 项（用**独立的 Firefox 形状 mock**，
+  复用 Chromium 的会把要防的差异抹平）与产物级断言。
+  四个「抄过去也能跑但是错的」陷阱各做过反向验证。
+
+### 尚未完成 / Not yet done
+
+- **Firefox 真机隔离测试。** 目前只有单元测试覆盖，`docs/test-plan.md` §6.5 列了 10 项
+  只有真机能验的检查，其中出口 IP 隔离与 fail-closed 两项决定这个移植是否真的成立。
+  Chromium 侧的 18/18 验收不自动适用于 Firefox。
+  **Real-machine egress isolation on Firefox is unverified** — a known open item, not a guarantee.
+
+---
+
 ## v0.3.0
 
 延迟显示、智能分流、订阅刷新、端口自动探测，以及两个界面的重排。

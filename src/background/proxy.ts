@@ -26,7 +26,7 @@
 import { describeThrown, errors } from '../shared/errors'
 import type { ApplyResult, LevelOfControl, NormalizedError, Settings } from '../shared/types'
 import { platform } from './platform'
-import type { ProxyInspection } from './platform'
+import type { PlatformBlocker, ProxyInspection } from './platform'
 
 /**
  * 巡检结果类型从平台层透传出去。
@@ -40,6 +40,23 @@ export type { ProxyInspection }
 /** 判断给定的 levelOfControl 是否明确禁止本扩展写入。 */
 export function isBlockedByControl(level: LevelOfControl | 'unknown'): boolean {
   return level === 'not_controllable' || level === 'controlled_by_other_extensions'
+}
+
+/**
+ * 平台前置检查的结果 → 面向用户的错误。
+ *
+ * 🔴 声明成 `Record<PlatformBlocker, ...>` 而不是 switch：
+ *   给 `PlatformBlocker` 加一个成员时这里会**编译失败**，
+ *   逼着新情况被明确表态。若写成 switch + default，
+ *   新增的 blocker 会静默落进「未知错误」——
+ *   而这类错误恰恰是**用户自己能修好**的那种，
+ *   报成"未知"等于把一个可解决的问题变成一堵墙。
+ *
+ * 与 ADR-20 用 `Record<ErrorCode, boolean>` 强制对每个错误码表态同源。
+ */
+const BLOCKER_TO_ERROR: Record<PlatformBlocker, () => NormalizedError> = {
+  privateBrowsingAccessRequired: () => errors.privateBrowsingAccessRequired(),
+  ruleBasedRoutingUnsupported: () => errors.ruleBasedRoutingUnsupported(),
 }
 
 /**
@@ -86,6 +103,25 @@ export async function enableProxy(settings: Settings): Promise<ApplyResult> {
   // 注意 'unknown'（get 查询失败）**不阻断**写入：
   // 查询失败不代表写入会失败，而放弃写入的代价是泄漏风险。
   // 依照 fail-closed 精神，先尝试保护，写失败了再报错。
+
+  /*
+   * 平台级前置条件。
+   *
+   * 顺序上放在 levelOfControl 之后是刻意的：那两条是「浏览器不让我们写」，
+   * 而这一条是「这个平台在这份配置下做不到」。前者更根本 ——
+   * 被 Policy 锁死时，谈论"要不要授予私密窗口权限"没有意义。
+   *
+   * 🔴 这里**不能**沿用「unknown 不阻断」那条豁免。两者的性质相反：
+   *   查询失败时我们不知道写入会不会成功，试一下的代价只是可能报错；
+   *   而 blocker 是**已知**写不进去（Firefox 无私密窗口权限时 set() 必抛）
+   *   或**已知**写下去是错的（不支持内联 PAC 时按全局写会静默丢掉用户的
+   *   直连规则）。后者尤其危险：它不是"没保护"，而是"保护成了另一种样子"，
+   *   且用户看不出来。
+   */
+  const blocker = await platform.preflight(settings)
+  if (blocker !== null) {
+    return { ok: false, error: BLOCKER_TO_ERROR[blocker]() }
+  }
 
   try {
     await platform.applyProxy(settings)

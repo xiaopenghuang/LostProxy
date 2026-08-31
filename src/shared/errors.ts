@@ -48,6 +48,31 @@ export const errors = {
   proxyNotControllable: (): NormalizedError =>
     makeError('PROXY_NOT_CONTROLLABLE', 'error.proxyNotControllable'),
 
+  /**
+   * Firefox：缺少隐私窗口访问权，代理写入必然失败。
+   *
+   * 文案取向是**可操作**：这是用户两步就能自己修好的问题
+   * （about:addons → 勾一个框），所以必须把那两步说出来，
+   * 而不是只报「写入失败」。同时说明 Firefox 为什么要问 ——
+   * 代理设置对隐私窗口和普通窗口同时生效，
+   * 用户理解了原因才不会觉得这是插件在乱要权限。
+   */
+  privateBrowsingAccessRequired: (): NormalizedError =>
+    makeError('PROXY_PRIVATE_BROWSING_REQUIRED', 'error.privateBrowsingAccessRequired'),
+
+  /**
+   * 该平台做不到浏览器内规则分流。
+   *
+   * 🔴 这条错误的存在本身就是一个安全决策：宁可**拒绝开启**并报错，
+   *   也不静默退回全局代理。后者在网络上"能用"，却会让用户配的直连清单
+   *   被无声忽略 —— 而他完全看不出来。
+   *
+   * 文案给两条出路（切回全局 / 把规则写进内核配置），并说明后者其实更好：
+   * 内核的规则系统本来就比浏览器 PAC 强得多。
+   */
+  ruleBasedRoutingUnsupported: (): NormalizedError =>
+    makeError('ROUTING_MODE_UNSUPPORTED', 'error.ruleBasedRoutingUnsupported'),
+
   /** 写入 chrome.proxy 设置时 API 本身失败。 */
   proxyWriteFailed: (reason: string): NormalizedError =>
     makeError('UNKNOWN', 'error.proxyWriteFailed', { reason }),

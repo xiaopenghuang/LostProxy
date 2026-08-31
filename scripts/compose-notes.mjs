@@ -6,7 +6,7 @@
  * 「看起来发布成功了，但说明页是坏的」的结果 —— 这类失败只有用户能看见。
  *
  * 用法：
- *   node scripts/compose-notes.mjs <version> <sha256> <commit> [> out.md]
+ *   node scripts/compose-notes.mjs <version> <sha256> <firefoxSha256> <commit> [> out.md]
  *
  * CHANGELOG 里找不到对应小节就退出非零 —— 宁可不发，也不发一个说明写着
  * 「__CHANGES__」的 Release。
@@ -16,10 +16,12 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const ROOT = resolve(import.meta.dirname, '..')
-const [version, sha256, commit] = process.argv.slice(2)
+const [version, sha256, firefoxSha256, commit] = process.argv.slice(2)
 
-if (!version || !sha256 || !commit) {
-  console.error('用法: node scripts/compose-notes.mjs <version> <sha256> <commit>')
+if (!version || !sha256 || !firefoxSha256 || !commit) {
+  console.error(
+    '用法: node scripts/compose-notes.mjs <version> <sha256> <firefoxSha256> <commit>',
+  )
   process.exit(1)
 }
 
@@ -54,6 +56,7 @@ const notes = readFileSync(resolve(ROOT, '.github/release-notes.md'), 'utf8')
   .replaceAll('__CHANGES__', section)
   .replaceAll('__VERSION__', version)
   .replaceAll('__SHA256__', sha256)
+  .replaceAll('__FIREFOX_SHA256__', firefoxSha256)
   .replaceAll('__COMMIT__', commit)
 
 const leftover = notes.match(/__[A-Z0-9_]+__/g)

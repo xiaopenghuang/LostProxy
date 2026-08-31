@@ -7,11 +7,11 @@
 **Route one browser through your local proxy and leave the rest of the machine alone**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Edge%20%7C%20Chromium%20120+-0078D6?logo=microsoftedge&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Edge%20%7C%20Chrome%20120+%20%7C%20Firefox%20128+-0078D6?logo=microsoftedge&logoColor=white)
 ![Manifest](https://img.shields.io/badge/Manifest-V3-4285F4?logo=googlechrome&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8%20(Rolldown)-646CFF?logo=vite&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-917%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-994%20passing-brightgreen)
 
 [![Release](https://img.shields.io/github/v/release/xiaopenghuang/LostProxy?label=download&color=success)](https://github.com/xiaopenghuang/LostProxy/releases/latest)
 
@@ -25,14 +25,18 @@ A familiar bind on a campus network: you need a proxy to reach the literature, b
 turn on the system proxy the library catalogue, the lab database and the office printer all get
 routed around too. TUN mode goes further still and takes over every other application.
 
-LostProxy narrows the proxy's scope to **one browser**. The Edge instance that has it installed
-goes through your local Mihomo; Chrome, Firefox and everything else on the same machine keep
+LostProxy narrows the proxy's scope to **one browser**. The browser that has it installed
+goes through your local Mihomo; other browsers and everything else on the same machine keep
 their original network path.
 
 ```text
 Edge   ──▶ 127.0.0.1:7897 ──▶ Mihomo ──▶ proxy node ──▶ off-campus resources
 Chrome ──▶ DIRECT ─────────────────────▶ campus network ──▶ internal systems / databases
 ```
+
+There is one build for Edge/Chrome and one for Firefox. They share all business logic and the
+entire UI; only the layer that talks to the browser's proxy API differs — and those two APIs are
+entirely different, down to which value WebRTC leak protection has to be set to.
 
 No changes to the Windows system proxy, no registry writes, no TUN, no routing-table edits, no
 elevation. None of the protocols (VLESS / VMess / Trojan / SS / Hysteria2) are implemented here —
@@ -47,9 +51,15 @@ Mihomo does all of that. This project only controls scope.
   with `ERR_PROXY_CONNECTION_FAILED` rather than falling back to a direct connection. Better no
   network than leaking the real IP while the user believes the proxy is on. Verified on a real
   browser: `onProxyError.fatal === true` (aborted, not leaked).
-- **WebRTC locked into the proxy too** — sets `disable_non_proxied_udp` (IETF Mode 4) while the
-  proxy is on. The browser's default policy does **not** force WebRTC through a proxy, so UDP
-  would bypass an HTTP proxy and expose the real IP.
+- **WebRTC locked into the proxy too** — `disable_non_proxied_udp` (IETF Mode 4) on Chromium,
+  `proxy_only` on Firefox, while the proxy is on. The browser's default policy does **not** force
+  WebRTC through a proxy, so UDP would bypass an HTTP proxy and expose the real IP.
+
+  The two platforms using different values is not a typo: since Firefox 70 the identically-named
+  `disable_non_proxied_udp` degraded to "force the proxy *if one is configured*", so copying
+  Chromium's value across is **accepted**, raises **no error**, and gives **weaker** protection.
+  That class of difference has no compile-time or runtime signal, which is why the code keeps it
+  behind a whole abstraction layer and re-checks it on the published zip.
 - **Credentials stay local** — the Controller Secret never enters `chrome.storage.sync`, is never
   logged, and is never echoed back (the UI only shows "saved"). A test asserts it appears in no
   serialized object.
@@ -68,17 +78,44 @@ Mihomo does all of that. This project only controls scope.
 
 ## Install
 
-Download `lostproxy-v<version>.zip` from
-[Releases](https://github.com/xiaopenghuang/LostProxy/releases/latest), **unzip it**, then:
+[Releases](https://github.com/xiaopenghuang/LostProxy/releases/latest) carries two archives.
+They are **not interchangeable** — using the wrong one silently fails to proxy anything, with no
+error from the browser:
 
-1. Open `edge://extensions`
-2. Enable **Developer mode** (bottom left)
-3. Click **Load unpacked** and select **the unzipped folder** (you should see `manifest.json`
+| Browser | Download |
+| --- | --- |
+| Edge / Chrome | `lostproxy-v<version>.zip` |
+| Firefox | `lostproxy-firefox-v<version>.zip` |
+
+### Edge / Chrome
+
+1. Download and **unzip**
+2. Open `edge://extensions`
+3. Enable **Developer mode** (bottom left)
+4. Click **Load unpacked** and select **the unzipped folder** (you should see `manifest.json`
    directly inside it)
 
 > **Why there is no double-click installer**: Chromium rejects `.crx` files downloaded from a URL
 > (`CRX_REQUIRED_PROOF_MISSING`), so "load unpacked" is the only route outside the store. One-click
 > installation will come with an Edge Add-ons listing; that is for later.
+
+### Firefox
+
+1. Download and **unzip**
+2. Open `about:debugging#/runtime/this-firefox`
+3. Click **Load Temporary Add-on** and pick `manifest.json` inside the unzipped folder
+4. 🔴 Open `about:addons` → click LostProxy → turn **Run in Private Windows** **on**
+
+> **Step 4 is not optional.** Firefox proxy settings apply to private and normal windows alike, so
+> without that permission the browser does not let an extension change them at all —
+> `proxy.settings.set()` throws. LostProxy tells you where to enable it rather than pretending it
+> worked.
+>
+> Incidentally: what `scope: 'regular'` buys on Chromium ("InPrivate windows are proxied too, no
+> leak") is the **default** on Firefox — this prior grant is the price.
+
+> **Temporary add-ons are removed when Firefox closes.** That is a Firefox rule for unsigned
+> extensions, not a limitation of this extension. Permanent installation needs AMO signing; later.
 
 A proxy tool is worth checking the hash of — the release page carries a SHA-256. From v0.1.1
 onward, artifacts are built by GitHub Actions with a Sigstore-signed provenance attestation, so you
@@ -150,27 +187,39 @@ npm install
 npm run build
 ```
 
-Then in Edge: `edge://extensions` → enable **Developer mode** (bottom left) → **Load unpacked** →
-select **`dist/`** (not the repository root).
+Two outputs: `dist/` (Edge / Chrome) and `dist-firefox/` (Firefox).
 
-After changing code, run `npm run build` again and hit **Reload** on the extension in
-`edge://extensions`.
+Then in Edge: `edge://extensions` → enable **Developer mode** (bottom left) → **Load unpacked** →
+select **`dist/`** (not the repository root). Firefox goes through `about:debugging`; pick
+`dist-firefox/manifest.json`.
+
+After changing code, run `npm run build` again and hit **Reload** on the extension.
 
 | Command | Purpose |
 | --- | --- |
-| `npm run build` | Full build (clean → pages → service worker, two passes) |
+| `npm run build` | Full build, two passes per platform |
+| `npm run build:chromium` | Edge / Chrome only (no clean) |
+| `npm run build:firefox` | Firefox only (no clean) |
 | `npm run watch` | Rebuild popup/options on change |
-| `npm run watch:sw` | Rebuild the service worker on change (**separate terminal**) |
+| `npm run watch:sw` | Rebuild the background script on change (**separate terminal**) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run test` | Vitest unit tests |
 | `npm run verify` | typecheck + test + build |
-| `npm run package` | Build and produce a distributable zip in `release/`, with SHA-256 |
+| `npm run package` | Build and produce both distributable zips in `release/`, each with SHA-256 |
 | `npm run icons` | Re-derive the four icon sizes from `src/public/icons/icon.png` |
 
-**Why the build runs twice**: an MV3 service worker must be a self-contained single file — the
-moment a chunk import appears you get `Service worker registration failed` — and that requirement
-is mutually exclusive with the page entries' output. Hence two passes, and two terminals for watch
-mode.
+**Why each platform runs twice**: an MV3 background script must be a self-contained single file —
+the moment a chunk import appears you get `Service worker registration failed` — and that
+requirement is mutually exclusive with the page entries' output. Hence two passes, and two
+terminals for watch mode.
+
+**Why the platforms are separate builds rather than a runtime check**: the platform identifier is
+injected at compile time via Vite's `define`, so each bundle contains only one platform's code.
+That is not about saving a few KB — it makes "the Firefox bundle must not contain
+`disable_non_proxied_udp`" an assertable fact, and that assertion guards precisely the
+"copies across fine but is less safe" difference described above. Runtime sniffing cannot give you
+that, and it is unreliable anyway (Edge's UA says "Chrome", and Firefox also exposes a `chrome.*`
+namespace).
 
 ## Tech stack
 
@@ -179,7 +228,7 @@ mode.
 | Extension platform | Manifest V3 (`proxy` + `storage` + `privacy` permissions) |
 | Language | TypeScript 7 (native/Go compiler) |
 | Build | Vite 8 (Rolldown), hand-written config, two output passes |
-| Tests | Vitest 4, 917 tests, hand-written `chrome.*` mocks |
+| Tests | Vitest 4, 994 tests, hand-written `chrome.*` mocks |
 | UI | Plain HTML/CSS, no UI framework; Fluent Design visual language |
 | i18n | Hand-rolled; the EN dictionary is the single source of truth, so a missing translation is a compile error |
 
@@ -187,22 +236,35 @@ mode.
 
 ```
 src/
-  background/   proxy.ts    chrome.proxy reads/writes, error normalization
-                privacy.ts  WebRTC policy lock
+  background/   platform/   ← the only place browser differences exist
+                  types.ts    the contract + a full difference table
+                  chromium.ts every chrome.proxy / chrome.privacy call
+                  firefox.ts  every browser.proxy call
+                  index.ts    build-time selection; nowhere else asks "which browser"
+                proxy.ts    proxy orchestration, zero browser API calls
+                privacy.ts  WebRTC lock orchestration, likewise
+                pac.ts      PAC generation and rule sanitisation (the one injection surface)
                 mihomo.ts   Controller probe (read-only)
                 storage.ts  settings validation and persistence
                 orchestrator.ts  orchestration; every business decision lives here
-                index.ts    service worker shell, deliberately thin
+                index.ts    background script shell, deliberately thin
   popup/        toggle, status card, alerts
   options/      settings, language switch, controller probe
   shared/       types / constants / errors / i18n / messages
-tests/          917 unit tests and chrome API mocks
-scripts/        icon downscaling and generation
+  manifest.json         Chromium (service_worker)
+  manifest.firefox.json Firefox (scripts + gecko id)
+tests/          994 unit tests and two sets of chrome API mocks
+scripts/        packaging, release notes, icon generation
 ```
 
-The service worker is killed and restarted at the browser's discretion, so **no mutable state is
+The background script is killed and restarted at the browser's discretion, so **no mutable state is
 held at module scope** — every message re-reads from storage. Business decisions are not scattered
 through `proxy.ts`; they are concentrated in `orchestrator.ts`.
+
+**Browser differences are confined to `platform/`.** A single `chrome.` call inside `proxy.ts` or
+`privacy.ts` turns the test suite red — because that mistake behaves perfectly on Edge and only
+breaks on Firefox, and you usually have one browser open while developing. Likewise, neither build
+may contain the other platform's code, and that is re-checked **on the published zips**.
 
 ## Data location
 
@@ -215,7 +277,7 @@ throws, so nobody can quietly start writing to it later.
 ## Tests
 
 ```bash
-npm run test        # 917 tests, ~0.5s
+npm run test        # 994 tests, ~0.5s
 npm run verify      # typecheck + test + build
 ```
 
@@ -264,6 +326,28 @@ The three traps that cost the most time during development, all hit for real:
   `tools/conflict-test-extension/` — a thirty-line fixture requesting only `proxy` and making no
   network requests, because the SwitchyOmega this originally pointed at is discontinued and no
   longer runs on current Chromium.
+
+### Three more for the Firefox build
+
+- **No rule-based routing** (the in-browser direct-connection list). Firefox's `proxy.settings`
+  supports only `autoConfigUrl`, with no inline PAC, and forcing it would reintroduce the
+  "script unreachable → silent DIRECT" failure mode — the opposite of this project's fail-closed
+  stance. With smart routing enabled the extension **refuses to turn on and explains why**, rather
+  than quietly falling back to global (which would leave your direct list silently ignored).
+
+  Putting those rules in your Mihomo config is better anyway: the core's rule engine handles GEOIP,
+  IP-CIDR, process names and rule-set subscriptions, far beyond what browser PAC can do. A later
+  version will use `proxy.onRequest`, which also eliminates the PAC string-injection surface
+  entirely.
+- **Weaker runtime error signal**: Firefox's `proxy.onError` carries no `fatal` field, so unlike
+  Chromium it cannot distinguish "the request was blocked (no leak)" from "it went out direct
+  (possible leak)". The chosen stance is to raise a self-healing alert that promises nothing about
+  whether a leak occurred — rather than always assuming the worst, which would train users to
+  dismiss this class of alert and take the real leak warnings down with it.
+- **Real-machine isolation testing is not done.** Two-browser egress ASN separation is verified on
+  Chromium; the Firefox side currently has unit-test coverage only (including bundle-level
+  assertions) and **has not been verified on a real machine**. A known open item, not a known
+  guarantee.
 
 ## Roadmap
 

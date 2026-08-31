@@ -7,11 +7,11 @@
 **只让这一个浏览器走本机代理，系统其余部分保持原样**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Edge%20%7C%20Chromium%20120+-0078D6?logo=microsoftedge&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Edge%20%7C%20Chrome%20120+%20%7C%20Firefox%20128+-0078D6?logo=microsoftedge&logoColor=white)
 ![Manifest](https://img.shields.io/badge/Manifest-V3-4285F4?logo=googlechrome&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-8%20(Rolldown)-646CFF?logo=vite&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-917%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-994%20passing-brightgreen)
 
 [![Release](https://img.shields.io/github/v/release/xiaopenghuang/LostProxy?label=download&color=success)](https://github.com/xiaopenghuang/LostProxy/releases/latest)
 
@@ -24,13 +24,17 @@
 校园网里常见的两难：挂上代理才能查文献，但一开系统代理，校内的图书馆系统、实验室数据库、
 内网打印机全部跟着绕道走。TUN 模式更彻底，连别的软件一起接管。
 
-LostProxy 把代理的作用域收窄到**一个浏览器**。装了它的 Edge 走本机 Mihomo，同一台电脑上的
-Chrome、Firefox 和其他所有软件保持原始网络环境不变。
+LostProxy 把代理的作用域收窄到**一个浏览器**。装了它的那个浏览器走本机 Mihomo，同一台电脑上
+其他浏览器与所有软件保持原始网络环境不变。
 
 ```text
 Edge   ──▶ 127.0.0.1:7897 ──▶ Mihomo ──▶ 代理节点 ──▶ 站外资源
 Chrome ──▶ DIRECT ─────────────────────▶ 校园网络 ──▶ 校内系统 / 数据库
 ```
+
+Edge / Chrome 与 Firefox 各有一个产物。两者共享全部业务逻辑与界面，
+只有「怎么调浏览器的代理 API」那一层不同 —— 而那两套 API 完全不同，
+连 WebRTC 泄漏防护该写什么值都不一样。
 
 不修改 Windows 系统代理，不写注册表，不开 TUN，不改路由表，不需要管理员权限。协议层
 （VLESS / VMess / Trojan / SS / Hysteria2）一个都不实现，全部交给 Mihomo —— 本项目只做作用域控制。
@@ -42,8 +46,14 @@ Chrome ──▶ DIRECT ──────────────────�
 - **Fail-closed，不静默直连** — 代理不可用时中止请求并报 `ERR_PROXY_CONNECTION_FAILED`，
   而不是退回直连。宁可断网，也不在用户以为「已开代理」时泄漏真实 IP。真机实测
   `onProxyError.fatal === true`（已中止，未泄漏）。
-- **WebRTC 一并锁进代理** — 开启代理时设 `disable_non_proxied_udp`（IETF Mode 4）。浏览器默认
-  策略**不会**强制 WebRTC 走代理，UDP 会绕过 HTTP 代理直接暴露真实 IP。
+- **WebRTC 一并锁进代理** — Chromium 上设 `disable_non_proxied_udp`（IETF Mode 4），
+  Firefox 上设 `proxy_only`。浏览器默认策略**不会**强制 WebRTC 走代理，
+  UDP 会绕过 HTTP 代理直接暴露真实 IP。
+
+  两个平台用不同的值不是笔误：自 Firefox 70 起，同名的 `disable_non_proxied_udp`
+  在 Firefox 上退化成「有代理时才强制」，抄过去会被**接受**、**不报错**、
+  而防护**更弱**。这类差异没有任何编译期或运行期信号，所以代码里用一整层
+  抽象把它关起来，并在发布的 zip 上再验一次。
 - **凭据只留在本机** — Controller Secret 不进 `chrome.storage.sync`、不打日志、不回显（界面只显示
   「已保存」）。测试用例断言它不出现在任何序列化过的对象里。
 - **可观测性与可用性分开** — Mihomo Controller 探不通只显示灰点，**不报警**。多数 GUI 默认只开
@@ -57,15 +67,40 @@ Chrome ──▶ DIRECT ──────────────────�
 
 ## 安装
 
-从 [Releases](https://github.com/xiaopenghuang/LostProxy/releases/latest) 下载
-`lostproxy-v<版本>.zip`，**解压**，然后：
+[Releases](https://github.com/xiaopenghuang/LostProxy/releases/latest) 里有两个包，
+**不能混用** —— 装错的表现是「装上了但代理压根没生效」，而浏览器不报错：
 
-1. 打开 `edge://extensions`
-2. 打开左下角 **开发人员模式 / Developer mode**
-3. 点 **加载解压缩的扩展 / Load unpacked**，选**解压出来的那个文件夹**（里面应该能直接看到 `manifest.json`）
+| 浏览器 | 下载 |
+| --- | --- |
+| Edge / Chrome | `lostproxy-v<版本>.zip` |
+| Firefox | `lostproxy-firefox-v<版本>.zip` |
+
+### Edge / Chrome
+
+1. 下载并**解压**
+2. 打开 `edge://extensions`
+3. 打开左下角 **开发人员模式 / Developer mode**
+4. 点 **加载解压缩的扩展 / Load unpacked**，选**解压出来的那个文件夹**（里面应该能直接看到 `manifest.json`）
 
 > **为什么不是双击安装**：Chromium 从 URL 下载 `.crx` 会直接拒绝（`CRX_REQUIRED_PROOF_MISSING`），
 > 商店之外只有「加载解压缩」这一条路。上架 Edge Add-ons 商店后会有一键安装，那是后面的事。
+
+### Firefox
+
+1. 下载并**解压**
+2. 打开 `about:debugging#/runtime/this-firefox`
+3. 点 **临时载入附加组件**，选解压出来文件夹里的 `manifest.json`
+4. 🔴 打开 `about:addons` → 点开 LostProxy → 把 **在隐私窗口中运行** 打开
+
+> **第 4 步不是可选的。** Firefox 规定代理设置对隐私窗口与普通窗口同时生效，
+> 因此不给这个权限就**完全不允许**扩展改代理 —— `proxy.settings.set()` 会直接抛异常。
+> 没开的话扩展会明确告诉你去哪儿开，不会假装已经开好了。
+>
+> 顺带一提：Chromium 上靠 `scope: 'regular'` 换来的「InPrivate 窗口也走代理、不泄漏」，
+> 在 Firefox 上是**默认行为** —— 代价就是这个前置授权。
+
+> **临时载入的扩展在关闭 Firefox 后会消失。** 这是 Firefox 对未签名扩展的规定，
+> 不是本扩展的限制。永久安装需要走 AMO 签名，那是后面的事。
 
 代理工具值得核对哈希，Release 页面附了 SHA-256。从 v0.1.1 起，产物由 GitHub Actions 构建并带
 Sigstore 签名的来源证明，可以验证它确实来自本仓库的某次公开构建，而不是谁手动传上来的：
@@ -131,24 +166,34 @@ npm install
 npm run build
 ```
 
-然后在 Edge 里：`edge://extensions` → 打开左下角**开发人员模式** → **加载解压缩的扩展** →
-选 **`dist/`**（不是项目根目录）。
+产物有两个：`dist/`（Edge / Chrome）与 `dist-firefox/`（Firefox）。
 
-改了代码后重新 `npm run build`，再到 `edge://extensions` 点该扩展的**刷新**。
+然后在 Edge 里：`edge://extensions` → 打开左下角**开发人员模式** → **加载解压缩的扩展** →
+选 **`dist/`**（不是项目根目录）。Firefox 走 `about:debugging`，选 `dist-firefox/manifest.json`。
+
+改了代码后重新 `npm run build`，再到扩展页点该扩展的**刷新**。
 
 | 命令 | 作用 |
 | --- | --- |
-| `npm run build` | 完整构建（clean → 页面 → Service Worker，两趟） |
+| `npm run build` | 完整构建，两个平台各两趟 |
+| `npm run build:chromium` | 只构建 Edge / Chrome 版（不 clean） |
+| `npm run build:firefox` | 只构建 Firefox 版（不 clean） |
 | `npm run watch` | 监听重建 Popup / Options |
-| `npm run watch:sw` | 监听重建 Service Worker（**另开一个终端**） |
+| `npm run watch:sw` | 监听重建背景脚本（**另开一个终端**） |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run test` | Vitest 单元测试 |
 | `npm run verify` | typecheck + test + build 全量自检 |
-| `npm run package` | 构建并打出可分发的 zip 到 `release/`（附 SHA-256） |
+| `npm run package` | 构建并打出两个可分发 zip 到 `release/`（各附 SHA-256） |
 | `npm run icons` | 从 `src/public/icons/icon.png` 重新降采样出四种尺寸 |
 
-**为什么构建要跑两趟**：MV3 的 Service Worker 必须是自包含单文件（一旦产生 chunk import 就
+**为什么每个平台要跑两趟**：MV3 的背景脚本必须是自包含单文件（一旦产生 chunk import 就
 `Service worker registration failed`），这与页面入口的输出要求互斥。所以 watch 也要开两个终端。
+
+**为什么两个平台分开构建而不是运行期判断**：平台标识由 Vite 的 `define` 在编译期注入，
+因此产物里只有一个平台的代码。这不只是省几 KB —— 它让「Firefox 包里不该出现
+`disable_non_proxied_udp`」成为一条可断言的事实，而那条断言守的正是上面提到的
+那处「抄过去也能跑但更不安全」的差异。运行期嗅探做不到这一点，
+而且它本身也不可靠（Edge 的 UA 里有 "Chrome"，Firefox 也提供 `chrome.*` 命名空间）。
 
 ## 技术栈
 
@@ -157,7 +202,7 @@ npm run build
 | 扩展平台 | Manifest V3（`proxy` + `storage` + `privacy` 权限） |
 | 语言 | TypeScript 7（native/Go 编译器） |
 | 构建 | Vite 8（Rolldown），手写配置，两趟输出 |
-| 测试 | Vitest 4，917 项，含 `chrome.*` 手写 mock |
+| 测试 | Vitest 4，994 项，含 `chrome.*` 手写 mock |
 | 界面 | 原生 HTML/CSS，无 UI 框架；Fluent Design 视觉语言 |
 | i18n | 自实现，EN 词典为单一真源，缺翻译是编译期错误 |
 
@@ -165,21 +210,34 @@ npm run build
 
 ```
 src/
-  background/   proxy.ts    chrome.proxy 读写与错误归一
-                privacy.ts  WebRTC 策略锁
+  background/   platform/   ← 唯一存在浏览器差异的地方
+                  types.ts    契约 + 两个平台的完整差异对照表
+                  chromium.ts chrome.proxy / chrome.privacy 的全部调用
+                  firefox.ts  browser.proxy 的全部调用
+                  index.ts    构建期选择，别处一律不问"是哪个浏览器"
+                proxy.ts    代理编排，零浏览器 API 调用
+                privacy.ts  WebRTC 锁编排，同上
+                pac.ts      PAC 生成与规则清洗（唯一的注入面）
                 mihomo.ts   Controller 探活（只读）
                 storage.ts  设置校验与持久化
                 orchestrator.ts  编排，全部业务决策集中在此
-                index.ts    Service Worker 外壳，极薄
+                index.ts    背景脚本外壳，极薄
   popup/        开关、状态卡片、告警
   options/      设置页、语言切换、Controller 探活
   shared/       types / constants / errors / i18n / messages
-tests/          917 项单元测试与 chrome API mock
-scripts/        图标降采样与生成
+  manifest.json         Chromium（service_worker）
+  manifest.firefox.json Firefox（scripts + gecko id）
+tests/          994 项单元测试与两套 chrome API mock
+scripts/        打包、发布说明、图标生成
 ```
 
-Service Worker 会被浏览器随时杀掉重启，因此**模块作用域不存任何可变状态**，每次消息到达都从
+背景脚本会被浏览器随时杀掉重启，因此**模块作用域不存任何可变状态**，每次消息到达都从
 storage 重读。业务决策不散落在 `proxy.ts` 里，集中在 `orchestrator.ts`。
+
+**浏览器差异全部关在 `platform/` 里。** `proxy.ts` 与 `privacy.ts` 的代码中
+出现一次 `chrome.` 调用就会让测试变红 —— 因为这类错误在 Edge 上完全正常，
+只在 Firefox 上炸，而开发时手边通常只有一个浏览器。同理，两个产物之间
+不得混入对方的代码，这一条在**发布的 zip 上**也再验一次。
 
 ## 数据存放
 
@@ -191,7 +249,7 @@ storage 重读。业务决策不散落在 `proxy.ts` 里，集中在 `orchestrat
 ## 测试
 
 ```bash
-npm run test        # 917 项，约 0.5s
+npm run test        # 994 项，约 0.5s
 npm run verify      # typecheck + test + build
 ```
 
@@ -232,6 +290,24 @@ LostProxy ON 时必须满足： Edge 出口 IP ≠ Chrome 出口 IP
 - 与其他代理扩展冲突时会拒绝开启并说明是谁在控制，不强行覆盖。这一项用仓库自带的
   `tools/conflict-test-extension/` 真机验过 —— 一个只申请 `proxy` 权限、不发任何网络请求的
   三十行夹具，因为原先推荐的 SwitchyOmega 已停止维护、且在现在的 Chromium 上无法运行。
+
+### Firefox 版另有三条
+
+- **不支持智能分流**（浏览器内的直连规则清单）。Firefox 的 `proxy.settings` 只支持
+  `autoConfigUrl`，没有内联 PAC，硬做会引入「取不到脚本就静默直连」这个失败模式 ——
+  与本项目的 fail-closed 取向正好相反。开着分流模式时扩展会**拒绝开启并说明原因**，
+  而不是悄悄按全局代理处理（后者会让你配的直连清单被无声忽略）。
+
+  把这些规则写进 Mihomo 配置反而更好：内核的规则系统支持 GEOIP、IP-CIDR、进程名、
+  规则集订阅，比浏览器 PAC 强得多。后续版本会用 `proxy.onRequest` 实现，
+  那条路顺带把 PAC 的字符串注入面整个消掉。
+- **运行时错误信号更弱**：Firefox 的 `proxy.onError` 不带 `fatal` 字段，
+  因此无法像 Chromium 那样区分「请求被拦住了（没泄漏）」与「已经直连出去了（可能泄漏）」。
+  此时的取向是报一条可自愈的告警、不对是否泄漏做任何承诺 —— 而不是一律按最坏情况报警，
+  因为那会训练用户去点掉这类告警，连真正的泄漏警告也一起点掉。
+- **真机隔离测试尚未完成。** Chromium 侧已实测两个浏览器不同出口 ASN；
+  Firefox 侧目前只有单元测试覆盖（含产物级断言），**尚未在真机上验证出口隔离**。
+  这是已知的待验项，不是已知的保证。
 
 ## 路线图
 

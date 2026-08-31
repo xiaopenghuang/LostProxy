@@ -108,6 +108,22 @@ export type ErrorCode =
   /** §22 Case 3：代理设置完全不可控（通常意味着企业/校园 Policy） */
   | 'PROXY_NOT_CONTROLLABLE'
   /**
+   * Firefox：用户还没授予「在隐私窗口中运行」，`proxy.settings.set()` 会抛。
+   *
+   * 与 PROXY_NOT_CONTROLLABLE 刻意分开：那一条是**没救**（Policy 锁死，
+   * 用户无能为力），这一条是**用户自己勾一下就好**。
+   * 报成同一个码会让一个两步可解的问题读起来像一堵墙。
+   */
+  | 'PROXY_PRIVATE_BROWSING_REQUIRED'
+  /**
+   * 该平台做不到浏览器内规则分流（Firefox 不支持内联 PAC）。
+   *
+   * 🔴 必须**拒绝开启**而不是退回全局代理。退回全局在网络上"能用"，
+   *   但会静默丢掉用户配的直连清单 —— 他本该直连的校内站点全部走了代理，
+   *   而 UI 显示一切正常。这不是"没保护"，是"保护成了另一种样子"。
+   */
+  | 'ROUTING_MODE_UNSUPPORTED'
+  /**
    * onProxyError 且 `fatal: true` —— 请求被**阻止**，真实 IP 未泄漏。
    * 属于瞬时故障：状态恢复后应当自动消失（architecture.md ADR-22）。
    */

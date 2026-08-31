@@ -126,6 +126,31 @@ export function sanitizeRules(rules: readonly string[]): string[] {
 }
 
 /**
+ * 这份配置是否真的需要「浏览器内规则分流」。
+ *
+ * 🔴 **单一真源。** 这个谓词有两个调用方，它们必须永远给出同一个答案：
+ *
+ *   1. `platform/chromium.ts` 的 `buildProxyConfig` —— 决定生成 PAC 还是
+ *      `fixed_servers`；
+ *   2. `proxy.ts` 的 `enableProxy`（经由平台的 `preflight`）—— 决定在不支持
+ *      分流的平台上是否拒绝开启。
+ *
+ * 若两处各写一遍 `routingMode === 'smart' && rules.length > 0`，就存在一种
+ * 恶性的不一致：一方认为「需要分流」而另一方认为「不需要」。落到 Firefox 上
+ * 的表现是**静默按全局代理写入**，用户配的直连规则被无声忽略 ——
+ * 而那意味着他本该直连的校内站点全部走了代理，正是本项目要解决的问题反过来发生。
+ *
+ * 注意判据是**清洗后**的规则数而不是原始清单长度：全是非法规则的清单
+ * 等价于空清单（`sanitizeRules` 会全部丢掉），此时退回全局是正确的。
+ */
+export function needsRuleBasedRouting(settings: {
+  readonly routingMode: string
+  readonly directRules: readonly string[]
+}): boolean {
+  return settings.routingMode === 'smart' && sanitizeRules(settings.directRules).length > 0
+}
+
+/**
  * 生成 PAC 脚本。
  *
  * 脚本逻辑刻意写得极简 —— 它对**每个请求**都要执行一次，

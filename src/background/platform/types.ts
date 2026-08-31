@@ -10,29 +10,39 @@
  * | | Chromium | Firefox |
  * | --- | --- | --- |
  * | 配置形态 | `fixed_servers` + `singleProxy` | `{proxyType:'manual', http, httpProxyAll}` |
- * | bypass | `bypassList: string[]` + `<local>` 令牌 | `passthrough` 逗号分隔字符串，无 `<local>` |
+ * | bypass | `bypassList: string[]` | `passthrough` 逗号分隔字符串（两边都认 `<local>`） |
  * | PAC | 内联 `pacScript.data` | **只支持 `autoConfigUrl`**，没有内联 |
  * | fail-open 兜底 | `mandatory: true` 可关掉 | 无此概念，要用 `proxy.onRequest` |
  * | 写入 scope | `set({value, scope})` | `set({value})`，**没有 scope 参数** |
+ * | 省略字段 | 保留原值 | **重置为默认值**（见下方 🔴🔴） |
  * | WebRTC 强制代理 | `disable_non_proxied_udp` | `proxy_only`（见下方 🔴） |
- * | 运行时错误 | `onProxyError`，带 `fatal` | `onError`，**没有 fatal** |
+ * | 运行时错误 | `onProxyError`，带 `fatal` | `onError`，**没有 fatal**，且只在 PAC/onRequest 出错时触发 |
+ * | 写入前置条件 | 无 | **需要私密窗口访问权**，否则 `set()` 抛异常 |
  *
  * 🔴 **WebRTC 那一行是安全相关的，不是命名差异。** 自 Firefox 70 起
  *    （Bugzilla 1452713），`disable_non_proxied_udp` 在 Firefox 里的语义
  *    退化成「有代理时强制走代理，**没有代理时回落到 mode 3**」。
  *    把 Chromium 的值原样抄过去会**静默地**削弱泄漏防护 —— 值被接受、
  *    不报错、行为变弱。Firefox 侧与原始意图等价的值是 `proxy_only`。
- *    正因为存在这种"抄过去也能跑但更不安全"的差异，平台差异必须集中在
- *    一处被逐条对照，而不是散在业务代码里靠 `isFirefox()` 临时判断。
+ *
+ * 🔴🔴 **「省略字段」那一行同样是安全相关的，而且更隐蔽。** MDN 原话：
+ *    「When setting this object, all properties are optional.
+ *      **Any omitted properties are reset to their default value.**」
+ *    而 `httpProxyAll` 的默认值是 `false`。也就是说在 Firefox 上只写
+ *    `{proxyType:'manual', http:'127.0.0.1:7890'}` 会得到「只代理 HTTP，
+ *    HTTPS 走 `ssl`（未设）因而**直连**」—— 正是 ADR-01 在 Chromium 上
+ *    拒绝 `proxyForHttp` 的那个口子，换了个形状重新出现。
+ *    Firefox 侧与 `singleProxy` 等价的写法是显式 `httpProxyAll: true`。
  *
  * ## 这一层怎么划的
  *
  * 划线原则：**平台实现只回答「浏览器 API 怎么调」，不回答「该不该调」。**
  *
- *   - 平台负责：配置对象的形态、API 调用、平台特有的值与事件形状。
+ *   - 平台负责：配置对象的形态、API 调用、平台特有的值与事件形状，
+ *     以及**探测**自己能不能写（`preflight`）。
  *   - 共享层负责：全部**决策** —— 被别的扩展控制时拒绝写入、查询失败时
  *     降级成 `unknown` 而不是放弃写入、关闭用 `clear()` 而不是写 `direct`、
- *     WebRTC 锁的生命周期绑在代理开关上。
+ *     WebRTC 锁的生命周期绑在代理开关上，以及**探测结果该报成哪条错误**。
  *
  * 这条线的实际检验标准：本项目的安全语义（ADR-03 fail-closed、ADR-18
  * 释放而非强制、ADR-22 告警自愈）**一条都不该出现在平台实现里**。
@@ -50,6 +60,34 @@ import type { LevelOfControl, NormalizedError, Settings } from '../../shared/typ
 
 /** 当前支持的平台。加一个值就会在 `platform/index.ts` 处逼出一个选择分支。 */
 export type PlatformId = 'chromium' | 'firefox'
+
+/**
+ * 平台**当前无法写入代理**的原因。
+ *
+ * ## 为什么要有这个类型
+ *
+ * 有些「写不进去」既不是被别的扩展抢了、也不是 API 抛错，而是这个平台
+ * 在这种配置下**根本做不到**。两个已知的例子：
+ *
+ *   - Firefox 需要用户授予「在私密窗口中运行」才允许改代理设置；
+ *     没授权时 `proxy.settings.set()` 直接抛异常。
+ *   - Firefox 不支持内联 PAC，因此在 V0.4 智能分流开着时无法照配置写入。
+ *
+ * ## 为什么不让平台直接返回一条错误
+ *
+ * 因为「报成哪条错误、文案怎么写」是**决策**，属于共享层
+ * （见下方错误约定）。平台只回答「能不能写、不能的话是哪种情况」，
+ * 由 `proxy.ts` 把它映射成 `NormalizedError`。
+ *
+ * 🔴 这个联合类型加一个成员，共享层的映射表就会编译失败 ——
+ *   与 `Record<ErrorCode, boolean>` 是同一手法：逼着新增的情况被表态，
+ *   而不是落进一个 `default:` 分支里变成「未知错误」。
+ */
+export type PlatformBlocker =
+  /** 用户还没授予私密窗口访问权（Firefox）。**这是用户可自行修复的**。 */
+  | 'privateBrowsingAccessRequired'
+  /** 该平台做不到浏览器内规则分流（Firefox 没有内联 PAC）。 */
+  | 'ruleBasedRoutingUnsupported'
 
 /**
  * 浏览器代理设置的巡检结果。
@@ -105,6 +143,22 @@ export interface WebRtcInspection {
  */
 export interface BrowserPlatform {
   readonly id: PlatformId
+
+  /**
+   * 写入前的前置条件检查。返回 `null` 表示这个平台在这份配置下可以写。
+   *
+   * ⚠️ 这里只做**探测**，不做判断该报什么错 —— 那是共享层的事
+   *    （见 `PlatformBlocker` 的注释）。
+   *
+   * ⚠️ 也**不**检查是否被别的扩展控制。那道闸门在共享层，
+   *    因为「不强行覆盖」是一条与浏览器无关的策略。
+   *
+   * 为什么需要这个钩子而不是让 `applyProxy` 直接抛：Firefox 缺私密窗口
+   * 访问权时 `set()` 抛出的是一句面向开发者的英文，塞进 UI 对用户毫无
+   * 指导意义 —— 而这恰恰是**用户自己一勾就能修好**的问题。
+   * 提前探测才能给出「去哪儿勾哪个框」的具体指引。
+   */
+  preflight(settings: Settings): Promise<PlatformBlocker | null>
 
   /**
    * 读取浏览器当前的代理状态并与期望配置比对。
