@@ -7,121 +7,312 @@
   </head>
   <body>
     <main class="page">
+      <!-- ============ 页头 Header ============ -->
       <header class="page-head">
-        <span class="mark" aria-hidden="true">
-          <svg viewBox="0 0 20 20" fill="none">
-            <path
-              d="M10 2 4 4.2v5c0 3.6 2.5 6.8 6 7.6 3.5-.8 6-4 6-7.6v-5L10 2Z"
-              stroke="currentColor"
-              stroke-width="1.4"
-              stroke-linejoin="round"
-            />
-            <path
-              d="M10 6.4v3m0 0L7.6 12m2.4-2.6L12.4 12"
-              stroke="currentColor"
-              stroke-width="1.4"
-              stroke-linecap="round"
-            />
-          </svg>
-        </span>
-        <div>
-          <h1 data-i18n="options.title"></h1>
-          <p class="lede" data-i18n="options.lede"></p>
+        <div class="page-head-main">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 20 20" fill="none">
+              <path
+                d="M10 2 4 4.2v5c0 3.6 2.5 6.8 6 7.6 3.5-.8 6-4 6-7.6v-5L10 2Z"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M10 6.4v3m0 0L7.6 12m2.4-2.6L12.4 12"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linecap="round"
+              />
+            </svg>
+          </span>
+          <div class="page-head-text">
+            <div class="brand-title-row">
+              <h1 data-i18n="options.title"></h1>
+              <span class="version-tag">v0.2.0</span>
+            </div>
+            <p class="lede" data-i18n="options.lede"></p>
+          </div>
+        </div>
+
+        <!-- 语言选择器：即时生效，不在 form 内 -->
+        <div class="head-lang">
+          <span class="lang-icon" aria-hidden="true">
+            <svg viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M1.8 8h12.4M8 1.8c1.6 1.8 2.4 4 2.4 6.2s-.8 4.4-2.4 6.2c-1.6-1.8-2.4-4-2.4-6.2s.8-4.4 2.4-6.2Z" stroke="currentColor" stroke-width="1.3"/>
+            </svg>
+          </span>
+          <label for="language" class="head-lang-label" data-i18n="options.languageLabel"></label>
+          <div class="select-wrapper">
+            <select id="language" class="control control--compact"></select>
+          </div>
         </div>
       </header>
 
       <form id="form" novalidate>
-        <!-- 语言放最前面：用户打开设置页最可能想做的第一件事就是切语言 -->
-        <section class="card">
-          <h2 data-i18n="options.groupLanguage"></h2>
-          <div class="field">
-            <label for="language" data-i18n="options.languageLabel"></label>
-            <select id="language" class="control"></select>
-          </div>
-        </section>
-
-        <section class="card">
-          <h2 data-i18n="options.groupProxy"></h2>
-          <p class="hint" data-i18n="options.proxyHint"></p>
-          <div class="field">
-            <label for="proxy-host" data-i18n="options.proxyHost"></label>
-            <input id="proxy-host" class="control" type="text" spellcheck="false" autocomplete="off" />
-          </div>
-          <div class="field">
-            <label for="proxy-port" data-i18n="options.proxyPort"></label>
-            <input id="proxy-port" class="control" type="number" min="1" max="65535" step="1" />
-          </div>
-        </section>
-
-        <section class="card">
-          <h2 data-i18n="options.groupController"></h2>
-          <p class="hint" data-i18n="options.controllerHint"></p>
-          <div class="field">
-            <label for="controller-host" data-i18n="options.controllerHost"></label>
-            <input
-              id="controller-host"
-              class="control"
-              type="text"
-              spellcheck="false"
-              autocomplete="off"
-            />
-          </div>
-          <div class="field">
-            <label for="controller-port" data-i18n="options.controllerPort"></label>
-            <input id="controller-port" class="control" type="number" min="1" max="65535" step="1" />
-          </div>
-          <div class="field">
-            <label for="controller-secret" data-i18n="options.controllerSecret"></label>
-            <div class="field-row">
-              <!-- type=password 且从不回显已保存的值（security.md §2.1） -->
-              <input id="controller-secret" class="control" type="password" autocomplete="off" />
-              <button type="button" id="clear-secret" class="btn" data-i18n="common.clear" hidden></button>
+        <!-- ============ 1. 连接 ============ -->
+        <div class="section-block">
+          <div class="section-header">
+            <div class="section-title-wrap">
+              <span class="section-icon section-icon--blue" aria-hidden="true">
+                <svg viewBox="0 0 16 16" fill="none">
+                  <path d="M9.5 3.5 12.5 6.5M6 10l-2 2a2.12 2.12 0 1 1-3-3l2-2a2.12 2.12 0 0 1 3 0M10 6l2-2a2.12 2.12 0 1 1 3 3l-2 2a2.12 2.12 0 0 1-3 0M6.5 9.5l3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              <h2 class="group-title" data-i18n="options.sectionConnection"></h2>
             </div>
           </div>
-          <p class="hint hint--tight" id="secret-hint"></p>
-          <div class="card-actions">
-            <button type="button" id="test-core" class="btn" data-i18n="options.testCore"></button>
-            <span class="result" id="test-result"></span>
-          </div>
-        </section>
 
-        <!--
-          V0.2 主策略组。放在 Controller 之后，因为读取策略组依赖
-          Controller 的地址、端口与密钥已经填好并保存。
-        -->
-        <section class="card">
-          <h2 data-i18n="options.groupSectionTitle"></h2>
-          <p class="hint" data-i18n="options.groupSectionHint"></p>
-          <div class="field">
-            <label for="primary-group" data-i18n="options.primaryGroupLabel"></label>
-            <select id="primary-group" class="control"></select>
-          </div>
-          <div class="card-actions">
-            <button
-              type="button"
-              id="load-groups"
-              class="btn"
-              data-i18n="options.groupLoadButton"
-            ></button>
-            <span class="result" id="groups-result"></span>
-          </div>
-          <p class="hint hint--tight" id="group-type-note"></p>
-        </section>
+          <div class="grid">
+            <!-- 浏览器本地代理 -->
+            <section class="card">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <h3 data-i18n="options.groupProxy"></h3>
+                  <p class="hint" data-i18n="options.proxyHint"></p>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="field">
+                  <label for="proxy-host" data-i18n="options.proxyHost"></label>
+                  <div class="input-wrapper">
+                    <input
+                      id="proxy-host"
+                      class="control"
+                      type="text"
+                      spellcheck="false"
+                      autocomplete="off"
+                    />
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="proxy-port" data-i18n="options.proxyPort"></label>
+                  <div class="input-wrapper">
+                    <input id="proxy-port" class="control" type="number" min="1" max="65535" step="1" />
+                  </div>
+                </div>
+              </div>
+            </section>
 
-        <section class="card">
-          <h2 data-i18n="options.groupLeak"></h2>
-          <label class="check">
-            <input id="webrtc-lock" type="checkbox" />
-            <span data-i18n="options.webrtcLockLabel"></span>
-          </label>
-          <p class="hint" data-i18n="options.webrtcLockHint"></p>
-        </section>
+            <!-- 内核外部控制 API -->
+            <section class="card">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <h3 data-i18n="options.groupController"></h3>
+                  <p class="hint" data-i18n="options.controllerHint"></p>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="field">
+                  <label for="controller-host" data-i18n="options.controllerHost"></label>
+                  <div class="input-wrapper">
+                    <input
+                      id="controller-host"
+                      class="control"
+                      type="text"
+                      spellcheck="false"
+                      autocomplete="off"
+                    />
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="controller-port" data-i18n="options.controllerPort"></label>
+                  <div class="field-row">
+                    <div class="input-wrapper input-wrapper--grow">
+                      <input
+                        id="controller-port"
+                        class="control"
+                        type="number"
+                        min="1"
+                        max="65535"
+                        step="1"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      id="probe-port"
+                      class="btn btn--subtle"
+                      data-i18n="options.probePort"
+                    ></button>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="controller-secret" data-i18n="options.controllerSecret"></label>
+                  <div class="field-row">
+                    <div class="input-wrapper input-wrapper--grow">
+                      <input id="controller-secret" class="control" type="password" autocomplete="off" />
+                    </div>
+                    <button
+                      type="button"
+                      id="clear-secret"
+                      class="btn btn--subtle"
+                      data-i18n="common.clear"
+                      hidden
+                    ></button>
+                  </div>
+                </div>
+                <p class="hint hint--tight" id="secret-hint"></p>
+              </div>
+              <div class="card-actions">
+                <button type="button" id="test-core" class="btn btn--secondary" data-i18n="options.testCore"></button>
+                <span class="result" id="test-result"></span>
+              </div>
+            </section>
+          </div>
+        </div>
 
-        <div class="submit-row">
-          <button type="submit" id="save" class="btn btn--primary" data-i18n="common.save"></button>
-          <span class="result" id="save-result"></span>
+        <!-- ============ 2. 节点与分流 ============ -->
+        <div class="section-block">
+          <div class="section-header">
+            <div class="section-title-wrap">
+              <span class="section-icon section-icon--teal" aria-hidden="true">
+                <svg viewBox="0 0 16 16" fill="none">
+                  <circle cx="4" cy="4" r="2" stroke="currentColor" stroke-width="1.3"/>
+                  <circle cx="12" cy="4" r="2" stroke="currentColor" stroke-width="1.3"/>
+                  <circle cx="8" cy="12" r="2" stroke="currentColor" stroke-width="1.3"/>
+                  <path d="M5.5 5.5 7 10.5M10.5 5.5 9 10.5M6 4h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg>
+              </span>
+              <h2 class="group-title" data-i18n="options.sectionRouting"></h2>
+            </div>
+          </div>
+
+          <div class="grid">
+            <!-- 主策略组 -->
+            <section class="card">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <h3 data-i18n="options.groupSectionTitle"></h3>
+                  <p class="hint" data-i18n="options.groupSectionHint"></p>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="field">
+                  <label for="primary-group" data-i18n="options.primaryGroupLabel"></label>
+                  <div class="select-wrapper">
+                    <select id="primary-group" class="control"></select>
+                  </div>
+                </div>
+                <p class="hint hint--tight" id="group-type-note"></p>
+              </div>
+              <div class="card-actions">
+                <button
+                  type="button"
+                  id="load-groups"
+                  class="btn btn--secondary"
+                  data-i18n="options.groupLoadButton"
+                ></button>
+                <span class="result" id="groups-result"></span>
+              </div>
+            </section>
+
+            <!-- 直连规则 (PAC) -->
+            <section class="card">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <h3 data-i18n="options.rulesSectionTitle"></h3>
+                  <p class="hint" data-i18n="options.rulesSectionHint"></p>
+                </div>
+              </div>
+              <div class="card-body">
+                <label for="direct-rules" class="sr-only" data-i18n="options.rulesLabel"></label>
+                <div class="code-editor-box">
+                  <textarea
+                    id="direct-rules"
+                    class="control control--area"
+                    rows="6"
+                    spellcheck="false"
+                    autocomplete="off"
+                  ></textarea>
+                </div>
+                <p class="hint hint--tight" id="rules-result"></p>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <!-- ============ 3. 维护与安全 ============ -->
+        <div class="section-block">
+          <div class="section-header">
+            <div class="section-title-wrap">
+              <span class="section-icon section-icon--purple" aria-hidden="true">
+                <svg viewBox="0 0 16 16" fill="none">
+                  <path d="M8 1.5 2.5 4v4c0 3.2 2.3 6.1 5.5 6.8 3.2-.7 5.5-3.6 5.5-6.8V4L8 1.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                  <path d="m6 8 1.5 1.5 3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              <h2 class="group-title" data-i18n="options.sectionMaintenance"></h2>
+            </div>
+          </div>
+
+          <div class="grid">
+            <!-- 订阅提供者 -->
+            <section class="card">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <h3>
+                    <span data-i18n="options.subsSectionTitle"></span>
+                    <span class="tag" data-i18n="options.tagNoSave"></span>
+                  </h3>
+                  <p class="hint" data-i18n="options.subsSectionHint"></p>
+                </div>
+              </div>
+              <div class="card-body">
+                <ul class="subs-list" id="subs-list"></ul>
+              </div>
+              <div class="card-actions">
+                <button
+                  type="button"
+                  id="load-subs"
+                  class="btn btn--secondary"
+                  data-i18n="options.subsLoadButton"
+                ></button>
+                <span class="result" id="subs-result"></span>
+              </div>
+            </section>
+
+            <!-- WebRTC 泄漏防护 -->
+            <section class="card card--accent">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <h3 data-i18n="options.groupLeak"></h3>
+                </div>
+              </div>
+              <div class="card-body">
+                <label class="check">
+                  <input id="webrtc-lock" type="checkbox" />
+                  <span class="check-box" aria-hidden="true">
+                    <svg viewBox="0 0 12 12" fill="none">
+                      <path d="M2.5 6 5 8.5 9.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </span>
+                  <span class="check-text" data-i18n="options.webrtcLockLabel"></span>
+                </label>
+                <p class="hint" data-i18n="options.webrtcLockHint"></p>
+              </div>
+            </section>
+          </div>
         </div>
       </form>
+
+      <!-- ============ 固定保存栏 ============ -->
+      <div class="save-bar" id="save-bar" data-dirty="false">
+        <div class="save-bar-inner">
+          <div class="save-status-wrap">
+            <span class="dirty-indicator" aria-hidden="true"></span>
+            <span class="save-note" id="save-note" data-i18n="options.unsavedNote"></span>
+          </div>
+          <span class="result" id="save-result"></span>
+          <button
+            type="submit"
+            form="form"
+            id="save"
+            class="btn btn--primary"
+            data-i18n="common.save"
+          ></button>
+        </div>
+      </div>
     </main>
     <script type="module" src="./options.ts"></script>
   </body>

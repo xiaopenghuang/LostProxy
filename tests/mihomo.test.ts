@@ -13,8 +13,11 @@ import {
   buildHeaders,
   controllerBaseUrl,
   getGroups,
+  getProviders,
   getVersion,
+  probeControllerPort,
   selectNode,
+  updateProvider,
 } from '../src/background/mihomo'
 import { DEFAULT_SETTINGS } from '../src/shared/constants'
 import type { Settings } from '../src/shared/types'
@@ -481,5 +484,218 @@ describe('selectNode', () => {
     const headers = calls[0]?.init?.headers as Record<string, string>
     expect(headers['Content-Type']).toBe('application/json')
     expect(headers['Authorization']).toBe(`Bearer ${SECRET}`)
+  })
+})
+
+// ===========================================================================
+// 端口自动探测
+// ===========================================================================
+
+describe('probeControllerPort', () => {
+  const version = { meta: true, version: 'v1.19.0' }
+
+  it('returns the first port that answers with a mihomo version', async () => {
+    stubFetch((url) => (url.includes(':9097') ? jsonResponse(version) : jsonResponse({}, 500)))
+
+    expect(await probeControllerPort(settings, [9090, 9097, 9091])).toBe(9097)
+  })
+
+  it('treats 401 as a hit — the port has mihomo, it just needs a secret', async () => {
+    /*
+     * 对「帮用户找到端口」这个目的来说，需要密钥就是成功：
+     * 端口上确实是 mihomo。要求它同时通过认证会让没填密钥的用户
+     * 探不到自己明明开着的端口。
+     */
+    stubFetch((url) => (url.includes(':9097') ? jsonResponse({}, 401) : jsonResponse({}, 500)))
+
+    expect(await probeControllerPort(settings, [9090, 9097])).toBe(9097)
+  })
+
+  it('returns null when nothing answers', async () => {
+    stubFetch(() => Promise.reject(new Error('ECONNREFUSED')))
+
+    expect(await probeControllerPort(settings, [9090, 9097])).toBeNull()
+  })
+
+  it('skips a port serving something that is not mihomo', async () => {
+    // 200 但不是 mihomo —— 那个端口上是别的服务，不该被当成命中。
+    stubFetch((url) =>
+      url.includes(':9090') ? jsonResponse({ hello: 'nginx' }) : jsonResponse(version),
+    )
+
+    expect(await probeControllerPort(settings, [9090, 9097])).toBe(9097)
+  })
+
+  it('stops at the first hit rather than probing everything', async () => {
+    stubFetch(() => jsonResponse(version))
+
+    await probeControllerPort(settings, [9090, 9097, 9091, 9099])
+
+    expect(calls).toHaveLength(1)
+  })
+
+  it('only ever talks to the configured host', async () => {
+    // 这是"试白名单"而非"扫描机器"的关键区别之一：不改 host。
+    stubFetch(() => jsonResponse(version, 500))
+
+    await probeControllerPort(settings, [9090, 9097])
+
+    for (const call of calls) expect(call.url).toContain('127.0.0.1')
+  })
+
+  it('never puts the secret in the probe URL', async () => {
+    stubFetch(() => jsonResponse({}, 500))
+
+    await probeControllerPort(withSecret, [9090, 9097])
+
+    for (const call of calls) expect(call.url).not.toContain(SECRET)
+  })
+})
+
+// ===========================================================================
+// V0.6 订阅
+// ===========================================================================
+
+describe('getProviders', () => {
+  const httpProvider = {
+    vehicleType: 'HTTP',
+    proxies: [{ name: 'a' }, { name: 'b' }],
+    updatedAt: '2026-08-31T10:00:00Z',
+  }
+
+  it('lists HTTP providers with node counts', async () => {
+    stubFetch(() => jsonResponse({ providers: { Airport: httpProvider } }))
+
+    const result = await getProviders(settings)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.providers).toEqual([
+      {
+        name: 'Airport',
+        nodeCount: 2,
+        updatedAt: '2026-08-31T10:00:00Z',
+        type: 'HTTP',
+        updatable: true,
+      },
+    ])
+  })
+
+  it('🔴 lists non-HTTP providers too, flagged as not updatable', async () => {
+    /*
+     * 早前此方把非 HTTP 的 provider 过滤掉了，结果 Master 在真机上看到
+     * 「内核报告没有任何订阅」—— 而他明明有订阅。
+     *
+     * 根因：Clash Verge 这类客户端会自己把订阅拉下来、展平成 `proxies:`
+     * 再交给内核，于是内核里一个 HTTP provider 都没有，只有一个
+     * `Compatible` 类型的隐式 provider。过滤之后那句提示技术上正确
+     * 但实际误导，读起来像"这功能坏了"。
+     *
+     * 现在全部列出并标 `updatable`，让 UI 能说清"有这个东西，但不能从这里刷新"。
+     */
+    stubFetch(() =>
+      jsonResponse({
+        providers: {
+          Remote: httpProvider,
+          // 这就是 Verge 用户实际会看到的那一项。
+          default: { vehicleType: 'Compatible', proxies: [{ name: 'x' }, { name: 'y' }] },
+          Local: { vehicleType: 'File', proxies: [{ name: 'z' }] },
+        },
+      }),
+    )
+
+    const result = await getProviders(settings)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // 可更新的排前面 —— 那才是用户到这一栏来想做的事。
+    expect(result.providers.map((p) => [p.name, p.updatable])).toEqual([
+      ['Remote', true],
+      ['Local', false],
+      ['default', false],
+    ])
+  })
+
+  it('🔴 a Verge-style config yields a listed-but-not-updatable entry, not an empty list', async () => {
+    // 回归测试：Master 真机报告的那个场景。
+    stubFetch(() =>
+      jsonResponse({
+        providers: { default: { vehicleType: 'Compatible', proxies: [{ name: 'a' }] } },
+      }),
+    )
+
+    const result = await getProviders(settings)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.providers).toHaveLength(1)
+    expect(result.providers[0]?.updatable).toBe(false)
+  })
+
+  it('🔴 never surfaces a subscription URL even if the core starts sending one', async () => {
+    /*
+     * 内核目前不返回订阅 URL，而「不经手就不会泄漏」正是 ADR-34 乐于接受的
+     * 那个限制。这条测试锁住的是：即便将来内核加了这个字段，我们也不读取它。
+     */
+    stubFetch(() =>
+      jsonResponse({
+        providers: {
+          Airport: { ...httpProvider, subscriptionInfo: 'x', url: 'https://secret.example/sub?t=1' },
+        },
+      }),
+    )
+
+    const result = await getProviders(settings)
+
+    expect(JSON.stringify(result)).not.toContain('secret.example')
+  })
+
+  it('tolerates a missing updatedAt', async () => {
+    stubFetch(() => jsonResponse({ providers: { A: { vehicleType: 'HTTP', proxies: [] } } }))
+
+    const result = await getProviders(settings)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.providers[0]?.updatedAt).toBeNull()
+  })
+
+  it.each([
+    ['401', 401, 'CORE_AUTH_FAILED'],
+    ['500', 500, 'CORE_BAD_RESPONSE'],
+  ])('maps HTTP %s to %s', async (_label, status, code) => {
+    stubFetch(() => jsonResponse({}, status))
+
+    const result = await getProviders(settings)
+
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe(code)
+  })
+})
+
+describe('updateProvider', () => {
+  it('PUTs to the encoded provider path', async () => {
+    stubFetch(() => new Response(null, { status: 204 }))
+
+    const result = await updateProvider(settings, 'My Airport | 主力')
+
+    expect(result.ok).toBe(true)
+    expect(calls[0]?.init?.method).toBe('PUT')
+    // 订阅名与组名一样是用户数据，同样必须编码（ADR-30）。
+    expect(calls[0]?.url).toBe(
+      `http://127.0.0.1:9090/providers/proxies/${encodeURIComponent('My Airport | 主力')}`,
+    )
+  })
+
+  it('maps a failure to SUBS_UPDATE_FAILED and names the subscription', async () => {
+    stubFetch(() => jsonResponse({}, 500))
+
+    const result = await updateProvider(settings, 'Airport')
+
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('SUBS_UPDATE_FAILED')
+    expect(result.error.message).toContain('Airport')
   })
 })

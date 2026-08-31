@@ -19,7 +19,7 @@
 import { createTranslator, languageLabel, LANGUAGE_OPTIONS, resolveLocale } from '../shared/i18n'
 import type { Language, Locale, MessageKey } from '../shared/i18n'
 import { sendMessage } from '../shared/messages'
-import type { ProxyGroup, Settings, SettingsView } from '../shared/types'
+import type { ProviderView, ProxyGroup, Settings, SettingsView } from '../shared/types'
 
 const el = {
   form: document.querySelector<HTMLFormElement>('#form'),
@@ -40,6 +40,41 @@ const el = {
   loadGroups: document.querySelector<HTMLButtonElement>('#load-groups'),
   groupsResult: document.querySelector<HTMLElement>('#groups-result'),
   groupTypeNote: document.querySelector<HTMLElement>('#group-type-note'),
+  directRules: document.querySelector<HTMLTextAreaElement>('#direct-rules'),
+  rulesResult: document.querySelector<HTMLElement>('#rules-result'),
+  subsList: document.querySelector<HTMLElement>('#subs-list'),
+  loadSubs: document.querySelector<HTMLButtonElement>('#load-subs'),
+  subsResult: document.querySelector<HTMLElement>('#subs-result'),
+  probePort: document.querySelector<HTMLButtonElement>('#probe-port'),
+  saveBar: document.querySelector<HTMLElement>('#save-bar'),
+}
+
+/**
+ * 更新「有未保存改动」的标记。
+ *
+ * 与 `hasUnsavedControllerChange()` 不同：那个只关心 Controller 三项（因为
+ * 探活和读取策略组用的是已保存的值），这个关心**全部**需要保存的字段。
+ *
+ * 判断方式是拿当前表单值与最近一次加载的视图逐项比较，而不是维护一个
+ * "用户碰过输入框"的布尔量 —— 后者会把"改了又改回去"误判成有改动。
+ */
+function refreshDirtyState(): void {
+  const bar = el.saveBar
+  if (!bar || loaded === null) return
+
+  const patch = collectPatch()
+  const dirty =
+    patch.proxyHost !== loaded.proxyHost ||
+    patch.proxyPort !== loaded.proxyPort ||
+    patch.controllerHost !== loaded.controllerHost ||
+    patch.controllerPort !== loaded.controllerPort ||
+    patch.webRtcLockEnabled !== loaded.webRtcLockEnabled ||
+    patch.primaryGroup !== loaded.primaryGroup ||
+    // secret 只要输入框非空就算有改动（留空 = 保持原值，不是清空）
+    patch.controllerSecret !== undefined ||
+    (patch.directRules ?? []).join('\n') !== loaded.directRules.join('\n')
+
+  bar.dataset.dirty = String(dirty)
 }
 
 let locale: Locale = resolveLocale('auto')
@@ -112,6 +147,108 @@ function renderSettings(view: SettingsView): void {
   }
 
   renderGroupOptions(view.primaryGroup)
+
+  if (el.directRules) {
+    el.directRules.value = view.directRules.join('\n')
+    el.directRules.placeholder = t('options.rulesPlaceholder')
+  }
+  if (el.rulesResult) {
+    el.rulesResult.textContent =
+      view.directRules.length > 0
+        ? t('options.rulesCount', { count: view.directRules.length })
+        : t('options.rulesNeedRules')
+  }
+
+  // 刚加载完（或刚保存完）必然是干净状态。
+  refreshDirtyState()
+}
+
+/**
+ * 渲染订阅列表（V0.6）。
+ *
+ * 每项只有一个「更新」按钮 —— 添加与删除做不到（ADR-34），
+ * 而放一个点了会报错的按钮比不放更糟。
+ */
+function renderProviders(providers: readonly ProviderView[]): void {
+  const list = el.subsList
+  if (!list) return
+
+  list.replaceChildren()
+
+  if (providers.length === 0) {
+    setResult(el.subsResult, t('options.subsEmpty'), '')
+    return
+  }
+
+  for (const provider of providers) {
+    const item = document.createElement('li')
+    item.className = 'subs-item'
+    if (!provider.updatable) item.dataset.updatable = 'false'
+
+    const meta = document.createElement('div')
+    meta.className = 'subs-meta'
+
+    const name = document.createElement('span')
+    name.className = 'subs-name'
+    // textContent：订阅名来自内核配置，视作不可信输入。
+    name.textContent = provider.name
+
+    const detail = document.createElement('span')
+    detail.className = 'subs-detail'
+    detail.textContent = provider.updatable
+      ? [
+          t('options.subsNodeCount', { count: provider.nodeCount }),
+          provider.updatedAt === null
+            ? t('options.subsNever')
+            : t('options.subsUpdatedAt', { time: formatTime(provider.updatedAt) }),
+        ].join(' · ')
+      : [
+          t('options.subsNodeCount', { count: provider.nodeCount }),
+          // 说明为什么这一项没有更新按钮，而不是让用户自己猜。
+          t('options.subsNotUpdatable', { type: provider.type }),
+        ].join(' · ')
+
+    meta.append(name, detail)
+    item.append(meta)
+
+    /*
+     * 只给可更新的项加按钮。放一个点了必定失败的按钮比不放更糟 ——
+     * 内核对非 HTTP provider 的更新请求会返回成功但什么都不做，
+     * 那种"点了没反应"最难排查。
+     */
+    if (provider.updatable) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'btn'
+      button.textContent = t('options.subsUpdate')
+      button.dataset.provider = provider.name
+      item.append(button)
+    }
+
+    list.append(item)
+  }
+
+  // 混合情形（有可更新的也有不可更新的）时补一句总说明。
+  if (providers.some((p) => !p.updatable) && providers.some((p) => p.updatable)) {
+    setResult(el.subsResult, t('options.subsFlattenedNote'), '')
+  }
+}
+
+/**
+ * 把 ISO 时间格式化成本地可读形式。
+ *
+ * 内核给的是 UTC ISO 串。直接显示会让用户对不上自己的时钟，
+ * 而「更新于什么时候」正是这一栏唯一的用途。
+ */
+function formatTime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 /**
@@ -186,6 +323,16 @@ function collectPatch(): Partial<Settings> {
     webRtcLockEnabled: el.webrtcLock?.checked ?? true,
     // 不 trim：组名必须与内核返回的字符串逐字节相等才能匹配（ADR-30）。
     primaryGroup: el.primaryGroup?.value ?? '',
+    /*
+     * 一行一条，丢掉空行。
+     * 这里**不做**字符校验 —— 校验在 background 做（storage.ts），
+     * 前端只负责把文本切成数组。理由与端口一样：前端校验是便利，
+     * 不是防线；防线必须在唯一的写入路径上。
+     */
+    directRules: (el.directRules?.value ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0),
   }
 
   const typed = el.secret?.value ?? ''
@@ -315,6 +462,91 @@ el.loadGroups?.addEventListener('click', async () => {
 el.primaryGroup?.addEventListener('change', () => {
   renderGroupTypeNote()
 })
+
+el.probePort?.addEventListener('click', async () => {
+  if (el.probePort) el.probePort.disabled = true
+  setResult(el.testResult, t('options.probing'), '')
+
+  const response = await sendMessage({ type: 'PROBE_PORT' })
+
+  if (el.probePort) el.probePort.disabled = false
+
+  if (!response.ok) {
+    setResult(el.testResult, t(response.error.key, response.error.params), 'error')
+    return
+  }
+
+  const { port } = response.data
+  if (port === null) {
+    setResult(el.testResult, t('options.probeNotFound'), 'error')
+    return
+  }
+
+  /*
+   * 只填进输入框，**不自动保存**（orchestrator.handleProbePort 有说明）：
+   * 探测可能命中一个用户并不想用的内核实例。端口是这个插件唯一必须填对的
+   * 东西，替用户决定它不合适。
+   */
+  if (el.controllerPort) el.controllerPort.value = String(port)
+  setResult(el.testResult, t('options.probeFound', { port }), 'ok')
+})
+
+el.loadSubs?.addEventListener('click', async () => {
+  // 与读取策略组同一条纪律：用的是已保存的 Controller 配置。
+  if (hasUnsavedControllerChange()) {
+    setResult(el.subsResult, t('options.subsNeedsController'), 'error')
+    return
+  }
+
+  if (el.loadSubs) el.loadSubs.disabled = true
+  setResult(el.subsResult, t('options.subsLoading'), '')
+
+  const response = await sendMessage({ type: 'LIST_PROVIDERS' })
+
+  if (response.ok) {
+    renderProviders(response.data.providers)
+    if (response.data.providers.length > 0) setResult(el.subsResult, '', '')
+  } else {
+    setResult(el.subsResult, t(response.error.key, response.error.params), 'error')
+  }
+
+  if (el.loadSubs) el.loadSubs.disabled = false
+})
+
+/*
+ * 更新订阅用事件委托：列表每次都整体重建，逐个挂监听器会随重绘累积。
+ */
+el.subsList?.addEventListener('click', async (event) => {
+  const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('[data-provider]')
+  const name = button?.dataset.provider
+  if (!button || name === undefined) return
+
+  const original = button.textContent
+  button.disabled = true
+  button.textContent = t('options.subsUpdating')
+
+  const response = await sendMessage({ type: 'UPDATE_PROVIDER', name })
+
+  if (response.ok) {
+    // 重绘整个列表：更新的**结果**就是节点数与时间变了，
+    // 不重绘用户无法确认更新是否真的生效。
+    renderProviders(response.data.providers)
+    setResult(el.subsResult, t('options.subsUpdated', { name }), 'ok')
+  } else {
+    button.disabled = false
+    button.textContent = original
+    setResult(el.subsResult, t(response.error.key, response.error.params), 'error')
+  }
+})
+
+/*
+ * 任何需要保存的字段一变就重算 dirty。
+ *
+ * 用事件委托挂在 form 上而不是逐个输入框挂：新增字段时不必记得回来补一行，
+ * 漏掉的后果是"改了但保存栏没提示"，属于安静失效。
+ */
+el.form?.addEventListener('input', refreshDirtyState)
+el.form?.addEventListener('change', refreshDirtyState)
 
 // 先用浏览器语言把静态文案填上，避免加载期间一片空白。
 applyStaticText()

@@ -11,6 +11,7 @@
 import { PROXY_BYPASS_LIST, PROXY_SCHEME, SETTING_SCOPE } from '../shared/constants'
 import { describeThrown, errors } from '../shared/errors'
 import type { ApplyResult, LevelOfControl, NormalizedError, Settings } from '../shared/types'
+import { buildPacScript, sanitizeRules } from './pac'
 
 /** 浏览器代理设置的巡检结果。 */
 export interface ProxyInspection {
@@ -46,6 +47,27 @@ export interface ProxyInspection {
  * 详见 architecture.md ADR-01 / ADR-02。
  */
 export function buildProxyConfig(settings: Settings): chrome.proxy.ProxyConfig {
+  /*
+   * V0.4：smart 模式改用 PAC。
+   *
+   * 🔴 `mandatory: true` 不可省（security.md §4）。PAC 默认 fail-open ——
+   *    脚本无效时浏览器会**静默退回直连**，与 fixed_servers 的失败语义正好相反。
+   *    设了它，失败会变成 ERR_MANDATORY_PROXY_CONFIGURATION_FAILED（可见故障）。
+   *
+   * smart 但一条规则都没有时**退回 global**，而不是生成一个"全部走代理"的
+   * PAC 脚本。两者网络行为一致，但 fixed_servers 是更简单、更可预测的那条路径，
+   * 且不必让每个请求都执行一次 JS。
+   */
+  if (settings.routingMode === 'smart' && sanitizeRules(settings.directRules).length > 0) {
+    return {
+      mode: 'pac_script',
+      pacScript: {
+        data: buildPacScript(settings.proxyHost, settings.proxyPort, settings.directRules),
+        mandatory: true,
+      },
+    }
+  }
+
   return {
     mode: 'fixed_servers',
     rules: {
@@ -67,7 +89,21 @@ export function isBlockedByControl(level: LevelOfControl | 'unknown'): boolean {
 
 /** 比较浏览器实际配置是否就是我们期望写入的那一份。 */
 function configMatches(config: chrome.proxy.ProxyConfig | undefined, expected: Settings): boolean {
-  if (!config || config.mode !== 'fixed_servers') return false
+  if (!config) return false
+
+  /*
+   * V0.4：smart 模式下浏览器处于 pac_script。
+   *
+   * 只比对 mode 与「脚本里确实出现了我们的代理地址」，不做全文比较 ——
+   * 浏览器 get() 回来的字符串可能被规范化（空白、换行），
+   * 全文相等会产生误判，而误判的后果是 UI 显示"状态不一致"的假警报。
+   */
+  if (expected.routingMode === 'smart' && config.mode === 'pac_script') {
+    const data = config.pacScript?.data ?? ''
+    return data.includes(`${expected.proxyHost}:${expected.proxyPort}`)
+  }
+
+  if (config.mode !== 'fixed_servers') return false
 
   const server = config.rules?.singleProxy
   if (!server) return false

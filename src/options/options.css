@@ -1,53 +1,108 @@
-/* LostProxy Settings —— 与 Popup 同一套 Fluent 变量。
+/* LostProxy Settings —— Fluent Design 2 (Windows 11 / Edge 视觉语言)。
    表单布局对应技术方案 §14。
 
-   文件名刻意不叫 style.css：Popup 已有一个 style.css，
-   同名 asset 在同一个 dist/assets 目录下会撞名。 */
+   设计取向：原生 Edge 级设计水准、通透立体的 Mica/Acrylic 分层卡片、
+   现代化图标指引、精致的 Focus Ring 以及优雅灵动的响应式排版。 */
 
 :root {
   color-scheme: light dark;
 
+  /* Fluent 2 品牌色彩系统 */
   --accent: #0f6cbd;
   --accent-hover: #115ea3;
-  --accent-soft: rgba(15, 108, 189, 0.09);
+  --accent-active: #0c4d87;
+  --accent-soft: rgba(15, 108, 189, 0.08);
+  --accent-soft-hover: rgba(15, 108, 189, 0.14);
+  --accent-glow: rgba(15, 108, 189, 0.25);
 
-  --ok: #0e700e;
+  /* 分组图标专属色调 */
+  --icon-blue: #0f6cbd;
+  --icon-blue-bg: rgba(15, 108, 189, 0.1);
+  --icon-teal: #0e707e;
+  --icon-teal-bg: rgba(14, 112, 126, 0.1);
+  --icon-purple: #744da9;
+  --icon-purple-bg: rgba(116, 77, 169, 0.1);
+
+  /* 语义色彩体系 */
+  --ok: #0f7b0f;
+  --ok-soft: rgba(15, 123, 15, 0.1);
   --danger: #c50f1f;
+  --danger-soft: rgba(197, 15, 31, 0.1);
+  --warn: #bc4b09;
 
-  --page: #f3f3f3;
+  /* 表面分层 (Surface Elevation) */
+  --page: #f5f6f8;
   --card: #ffffff;
-  --card-hover: #fafafa;
-  --stroke: rgba(0, 0, 0, 0.0578);
-  --stroke-strong: rgba(0, 0, 0, 0.14);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 0 1px rgba(0, 0, 0, 0.04);
+  --card-hover: #fafbfc;
+  --control-bg: #f9fafb;
+  --control-bg-hover: #f0f2f5;
 
-  --fg: #1b1b1b;
-  --fg-secondary: #616161;
-  --fg-tertiary: #8a8a8a;
+  /* 边框与光影 */
+  --stroke: rgba(0, 0, 0, 0.07);
+  --stroke-subtle: rgba(0, 0, 0, 0.035);
+  --stroke-strong: rgba(0, 0, 0, 0.15);
 
-  --radius-card: 8px;
-  --radius-control: 5px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04), 0 0 1px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.03), 0 1px 2px rgba(0, 0, 0, 0.03), 0 0 1px rgba(0, 0, 0, 0.04);
+  --shadow-card-hover: 0 6px 18px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.03);
+  --shadow-elevated: 0 10px 30px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
+
+  /* 文本系统 */
+  --fg: #1a1a1a;
+  --fg-secondary: #585858;
+  --fg-tertiary: #888888;
+
+  /* 圆角 */
+  --radius-card: 12px;
+  --radius-control: 6px;
+  --radius-pill: 999px;
+
+  /* 动效 */
+  --ease-fluent: cubic-bezier(0.1, 0.9, 0.2, 1);
+  --duration-quick: 140ms;
+  --duration-normal: 200ms;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --accent: #479ef5;
     --accent-hover: #62abf5;
-    --accent-soft: rgba(71, 158, 245, 0.14);
+    --accent-active: #2b88d8;
+    --accent-soft: rgba(71, 158, 245, 0.12);
+    --accent-soft-hover: rgba(71, 158, 245, 0.18);
+    --accent-glow: rgba(71, 158, 245, 0.3);
+
+    --icon-blue: #479ef5;
+    --icon-blue-bg: rgba(71, 158, 245, 0.15);
+    --icon-teal: #36c2d9;
+    --icon-teal-bg: rgba(54, 194, 217, 0.15);
+    --icon-purple: #b388ff;
+    --icon-purple-bg: rgba(179, 136, 255, 0.15);
 
     --ok: #54b054;
+    --ok-soft: rgba(84, 176, 84, 0.14);
     --danger: #ff99a4;
+    --danger-soft: rgba(255, 153, 164, 0.14);
+    --warn: #fbbc7f;
 
-    --page: #202020;
-    --card: #2b2b2b;
-    --card-hover: #323232;
-    --stroke: rgba(255, 255, 255, 0.0837);
+    --page: #181818;
+    --card: #222222;
+    --card-hover: #272727;
+    --control-bg: #1c1c1c;
+    --control-bg-hover: #262626;
+
+    --stroke: rgba(255, 255, 255, 0.08);
+    --stroke-subtle: rgba(255, 255, 255, 0.05);
     --stroke-strong: rgba(255, 255, 255, 0.18);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
 
-    --fg: #ffffff;
-    --fg-secondary: #cfcfcf;
-    --fg-tertiary: #9a9a9a;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.35), 0 0 1px rgba(255, 255, 255, 0.08);
+    --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.48), 0 0 1px rgba(255, 255, 255, 0.12);
+    --shadow-elevated: 0 10px 32px rgba(0, 0, 0, 0.55);
+
+    --fg: #f5f5f5;
+    --fg-secondary: #b8b8b8;
+    --fg-tertiary: #909090;
   }
 }
 
@@ -65,33 +120,52 @@
 
 body {
   margin: 0;
-  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  font-size: 14px;
+  font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  font-size: 13.5px;
   line-height: 1.55;
   color: var(--fg);
   background: var(--page);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .page {
-  max-width: 640px;
+  max-width: 940px;
   margin: 0 auto;
-  padding: 40px 24px 72px;
+  padding: 36px 28px 96px;
 }
 
-/* ---------- header ---------- */
+/* ---------- Header 页头 ---------- */
 
 .page-head {
   display: flex;
-  gap: 12px;
-  margin-bottom: 26px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 32px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--stroke);
+}
+
+.page-head-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
 }
 
 .mark {
   display: flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
-  margin-top: 3px;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-card);
+  background: var(--accent-soft);
   color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: 0 2px 8px var(--accent-glow);
 }
 
 .mark svg {
@@ -99,11 +173,35 @@ body {
   height: 26px;
 }
 
+.page-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.brand-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 3px;
+}
+
 h1 {
-  margin: 0 0 4px;
+  margin: 0;
   font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
-  font-size: 21px;
+  font-size: 23px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.version-tag {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--control-bg-hover);
+  color: var(--fg-secondary);
+  font-size: 11px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--stroke);
 }
 
 .lede {
@@ -112,28 +210,180 @@ h1 {
   color: var(--fg-secondary);
 }
 
-/* ---------- 卡片 ---------- */
+/* 语言选择器 */
+.head-lang {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: var(--radius-control);
+  background: var(--card);
+  border: 1px solid var(--stroke);
+  box-shadow: var(--shadow-sm);
+}
+
+.lang-icon {
+  display: flex;
+  align-items: center;
+  color: var(--fg-tertiary);
+}
+
+.lang-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.head-lang-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-secondary);
+  white-space: nowrap;
+}
+
+.control--compact {
+  width: auto;
+  min-width: 120px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.control--compact:hover {
+  background: var(--control-bg-hover);
+}
+
+/* ---------- 分组与标题 ---------- */
+
+.section-block {
+  margin-bottom: 32px;
+}
+
+.section-block:last-of-type {
+  margin-bottom: 0;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.section-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.section-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+.section-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.section-icon--blue {
+  color: var(--icon-blue);
+  background: var(--icon-blue-bg);
+}
+
+.section-icon--teal {
+  color: var(--icon-teal);
+  background: var(--icon-teal-bg);
+}
+
+.section-icon--purple {
+  color: var(--icon-purple);
+  background: var(--icon-purple-bg);
+}
+
+.group-title {
+  margin: 0;
+  font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-tertiary);
+}
+
+/* 两列自适应网格 */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 18px;
+  align-items: stretch;
+}
+
+/* ---------- 卡片 Card ---------- */
 
 .card {
-  margin-bottom: 16px;
-  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 22px;
   border: 1px solid var(--stroke);
   border-radius: var(--radius-card);
   background: var(--card);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--duration-normal) var(--ease-fluent),
+              border-color var(--duration-normal) var(--ease-fluent),
+              transform var(--duration-normal) var(--ease-fluent);
 }
 
-.card h2 {
+.card:hover {
+  border-color: color-mix(in srgb, var(--stroke) 70%, var(--stroke-strong));
+  box-shadow: var(--shadow-card-hover);
+}
+
+.card-header {
+  margin-bottom: 14px;
+}
+
+.card-title-group h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0 0 4px;
   font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 15.5px;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+}
+
+.card-body {
+  flex: 1;
+}
+
+/* 泄漏防护高亮边框卡片 */
+.card--accent {
+  position: relative;
+  border-left: 3.5px solid var(--accent);
+}
+
+.tag {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .hint {
-  margin: 0 0 16px;
+  margin: 0;
   font-size: 12.5px;
-  line-height: 1.6;
+  line-height: 1.55;
   color: var(--fg-secondary);
 }
 
@@ -143,14 +393,14 @@ h1 {
   color: var(--fg-tertiary);
 }
 
-/* ---------- 字段 ---------- */
+/* ---------- 表单字段 Field ---------- */
 
 .field {
   display: grid;
   grid-template-columns: 132px 1fr;
   align-items: center;
   gap: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 13px;
 }
 
 .field:last-of-type {
@@ -159,67 +409,139 @@ h1 {
 
 .field > label {
   font-size: 13px;
+  font-weight: 500;
   color: var(--fg-secondary);
 }
 
 .field-row {
   display: flex;
+  align-items: center;
   gap: 8px;
 }
 
-/* Fluent 输入框：底部有一条 accent 下划线在聚焦时出现 */
+.input-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.input-wrapper--grow {
+  flex: 1;
+}
+
+.select-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+/* Fluent 2 输入控件 */
 .control {
   width: 100%;
-  padding: 6px 10px;
+  padding: 7.5px 12px;
   border: 1px solid var(--stroke-strong);
-  border-bottom-width: 1px;
+  border-bottom: 1.5px solid var(--stroke-strong);
   border-radius: var(--radius-control);
   font: inherit;
   font-size: 13px;
   color: var(--fg);
-  background: var(--card);
+  background: var(--control-bg);
   font-variant-numeric: tabular-nums;
-  transition: border-color 120ms ease;
+  transition: border-color var(--duration-quick) ease,
+              box-shadow var(--duration-quick) ease,
+              background var(--duration-quick) ease;
 }
 
 .control:hover {
   border-color: var(--fg-tertiary);
+  background: var(--card);
 }
 
 .control:focus {
   outline: none;
-  border-color: var(--stroke-strong);
+  background: var(--card);
+  border-color: var(--accent);
   border-bottom: 2px solid var(--accent);
-  padding-bottom: 5px;
+  padding-bottom: 7px;
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 select.control {
   cursor: pointer;
+  appearance: auto;
 }
 
-/* ---------- 复选框 ---------- */
+/* ---------- 复选框 Checkbox ---------- */
 
 .check {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 9px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 10px;
   font-size: 13.5px;
+  font-weight: 550;
   cursor: pointer;
+  user-select: none;
 }
 
 .check input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
-  cursor: pointer;
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
 }
 
-/* ---------- 按钮 ---------- */
+.check-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1.5px solid var(--stroke-strong);
+  background: var(--card);
+  color: #ffffff;
+  transition: all var(--duration-quick) var(--ease-fluent);
+}
+
+.check-box svg {
+  width: 11px;
+  height: 11px;
+  opacity: 0;
+  transform: scale(0.5);
+  transition: all var(--duration-quick) var(--ease-fluent);
+}
+
+.check:hover .check-box {
+  border-color: var(--accent);
+}
+
+.check input:checked + .check-box {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 1px 3px var(--accent-glow);
+}
+
+.check input:checked + .check-box svg {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.check input:focus-visible + .check-box {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.check-text {
+  font-size: 13.5px;
+  color: var(--fg);
+}
+
+/* ---------- 按钮系统 Button ---------- */
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
-  padding: 6px 16px;
+  padding: 6.5px 16px;
   border: 1px solid var(--stroke-strong);
   border-radius: var(--radius-control);
   font: inherit;
@@ -228,12 +550,19 @@ select.control {
   color: var(--fg);
   background: var(--card);
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  box-shadow: var(--shadow-sm);
+  transition: all var(--duration-quick) var(--ease-fluent);
 }
 
 .btn:hover:not(:disabled) {
   background: var(--card-hover);
   border-color: var(--fg-tertiary);
+  transform: translateY(-0.5px);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.06);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(0.5px);
 }
 
 .btn:disabled {
@@ -248,45 +577,238 @@ select.control {
 
 .btn--primary {
   border-color: transparent;
-  color: #fff;
+  color: #ffffff;
   background: var(--accent);
+  box-shadow: 0 1px 3px var(--accent-glow);
 }
 
 .btn--primary:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: transparent;
+  box-shadow: 0 3px 10px var(--accent-glow);
 }
 
-/* ---------- 结果提示 ---------- */
+.btn--primary:active:not(:disabled) {
+  background: var(--accent-active);
+}
 
-.card-actions,
-.submit-row {
+.btn--secondary {
+  background: var(--card);
+  border-color: var(--stroke-strong);
+}
+
+.btn--subtle {
+  padding: 6px 12px;
+  font-size: 12px;
+  background: var(--control-bg);
+  border-color: var(--stroke);
+  box-shadow: none;
+}
+
+.btn--subtle:hover:not(:disabled) {
+  background: var(--control-bg-hover);
+  border-color: var(--stroke-strong);
+}
+
+/* ---------- 操作区与结果反馈 ---------- */
+
+.card-actions {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.card-actions {
   margin-top: 18px;
   padding-top: 16px;
   border-top: 1px solid var(--stroke);
 }
 
-.submit-row {
-  margin-top: 4px;
+/* ---------- 固定保存栏 (Acrylic Save Bar) ---------- */
+
+.save-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  border-top: 1px solid var(--stroke-strong);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  backdrop-filter: blur(20px) saturate(1.7);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.05);
+}
+
+.save-bar-inner {
+  display: flex;
+  max-width: 940px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  margin: 0 auto;
+  padding: 13px 28px;
+}
+
+.save-status-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+}
+
+.dirty-indicator {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 20%, transparent);
+  display: none;
+}
+
+.save-bar[data-dirty='true'] .dirty-indicator {
+  display: block;
+}
+
+.save-note {
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--fg-secondary);
+}
+
+.save-bar[data-dirty='false'] .save-note {
+  visibility: hidden;
+}
+
+.save-bar[data-dirty='true'] .save-note {
+  visibility: visible;
+}
+
+.save-bar[data-dirty='true'] .btn--primary {
+  box-shadow: 0 0 0 3.5px var(--accent-soft), 0 2px 8px var(--accent-glow);
+  animation: pulsePrimary 2s infinite var(--ease-fluent);
+}
+
+@keyframes pulsePrimary {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
 }
 
 .result {
   font-size: 12.5px;
+  font-weight: 550;
   line-height: 1.5;
   color: var(--fg-secondary);
 }
 
 .result[data-state="ok"] {
   color: var(--ok);
-  font-weight: 600;
 }
 
 .result[data-state="error"] {
   color: var(--danger);
+}
+
+/* ---------- 代码编辑框 Code Box ---------- */
+
+.code-editor-box {
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.control--area {
+  min-height: 120px;
+  padding: 10px 12px;
+  font-family: "Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  resize: vertical;
+  background: var(--control-bg);
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius-control);
+}
+
+.control--area:hover {
+  background: var(--card);
+}
+
+.control--area:focus {
+  background: var(--card);
+}
+
+/* ---------- 订阅列表 ---------- */
+
+.subs-list {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.subs-list:empty {
+  display: none;
+}
+
+.subs-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--stroke);
+  transition: background var(--duration-quick) ease;
+}
+
+.subs-item:last-child {
+  border-bottom: none;
+}
+
+.subs-meta {
+  min-width: 0;
+}
+
+.subs-name {
+  display: block;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subs-detail {
+  display: block;
+  margin-top: 2px;
+  color: var(--fg-secondary);
+  font-size: 11.5px;
+}
+
+.subs-item[data-updatable='false'] .subs-name {
+  color: var(--fg-secondary);
+  font-weight: 400;
+}
+
+/* 无障碍辅助 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-quick: 0ms;
+    --duration-normal: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

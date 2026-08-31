@@ -51,6 +51,8 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
       webRtcLockEnabled: true,
       language: 'en',
       primaryGroup: 'Proxy',
+      routingMode: 'global',
+      directRules: [],
     },
     coreStatus: 'online',
     coreVersion: 'v1.19.0',
@@ -65,7 +67,14 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
 }
 
 function group(overrides: Partial<GroupView> = {}): GroupView {
-  return { name: 'Proxy', type: 'Selector', now: 'HK-01', nodes: ['HK-01', 'JP-02'], ...overrides }
+  return {
+    name: 'Proxy',
+    type: 'Selector',
+    now: 'HK-01',
+    nodes: ['HK-01', 'JP-02'],
+    latency: {},
+    ...overrides,
+  }
 }
 
 /**
@@ -104,6 +113,24 @@ function nodeButtons(): HTMLButtonElement[] {
   return [...document.querySelectorAll<HTMLButtonElement>('.node-item')]
 }
 
+/**
+ * 切到【节点】标签。
+ *
+ * V0.4 起 Popup 分了标签页，节点列表默认不可见。渲染逻辑与可见性是两件事 ——
+ * 列表内容在渲染时就已生成，切标签只是显示它。测试断言内容时不需要切，
+ * 但断言 `hidden` 计算值时需要，否则父面板的 display:none 会让结论失真。
+ */
+function openNodesTab(): void {
+  document.querySelector<HTMLButtonElement>('#tab-nodes')?.click()
+}
+
+/** 各节点的名字。V0.3 起按钮里还有延迟徽章，所以要取 .node-name。 */
+function nodeNames(): (string | null)[] {
+  return [...document.querySelectorAll<HTMLElement>('.node-item .node-name')].map(
+    (n) => n.textContent,
+  )
+}
+
 function hintText(): string {
   const hint = document.querySelector<HTMLElement>('#nodes-hint')
   return hint?.hidden ? '' : (hint?.textContent ?? '')
@@ -138,7 +165,8 @@ describe('节点列表渲染（替代手工 S1）', () => {
     nextSnapshot = snapshot({ group: group() })
     await mountPopup()
 
-    expect(nodeButtons().map((b) => b.textContent)).toEqual(['HK-01', 'JP-02'])
+    // 取 .node-name 而不是整个按钮的 textContent —— V0.3 起按钮里还有延迟徽章。
+    expect(nodeNames()).toEqual(['HK-01', 'JP-02'])
   })
 
   it('marks the current node and disables it', async () => {
@@ -168,7 +196,7 @@ describe('节点列表渲染（替代手工 S1）', () => {
     await mountPopup()
 
     expect(document.querySelector('#node-list img')).toBeNull()
-    expect(nodeButtons()[0]?.textContent).toBe('<img src=x onerror=alert(1)>')
+    expect(nodeNames()[0]).toBe('<img src=x onerror=alert(1)>')
   })
 
   it('uses real buttons so keyboard access comes for free (replaces S15)', async () => {
@@ -324,5 +352,186 @@ describe('🔴 [hidden] 在真实样式下确实生效（ADR-26 的症状级验�
     expect(list).not.toBeNull()
     if (list === null) return
     expect(getComputedStyle(list).display).toBe('flex')
+  })
+})
+
+describe('标签页（V0.4 布局重做）', () => {
+  it('starts on the status tab with the nodes pane hidden', async () => {
+    nextSnapshot = snapshot({ group: group() })
+    await mountPopup()
+
+    expect(document.querySelector('#tab-status')?.getAttribute('aria-selected')).toBe('true')
+    expect(document.querySelector<HTMLElement>('#pane-nodes')?.hidden).toBe(true)
+    expect(getComputedStyle(document.querySelector<HTMLElement>('#pane-nodes')!).display).toBe(
+      'none',
+    )
+  })
+
+  it('reveals the nodes pane when its tab is clicked', async () => {
+    nextSnapshot = snapshot({ group: group() })
+    await mountPopup()
+
+    openNodesTab()
+
+    expect(document.querySelector<HTMLElement>('#pane-nodes')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLElement>('#pane-status')?.hidden).toBe(true)
+    // 内容在渲染时就已生成，切标签只是显示它。
+    expect(nodeNames()).toEqual(['HK-01', 'JP-02'])
+  })
+
+  it('🔴 keeps the toggle and the promises visible on both tabs', async () => {
+    /*
+     * 技术方案 §13 要求承诺文案（系统代理/TUN 未修改）任何时候都不消失，
+     * 而开关是本插件的主体功能。两者都必须在标签容器**之外**（ADR-35）——
+     * 否则切到"节点"标签就看不到自己开没开代理。
+     */
+    nextSnapshot = snapshot({ group: group() })
+    await mountPopup()
+    openNodesTab()
+
+    expect(getComputedStyle(document.querySelector<HTMLElement>('#toggle')!).display).not.toBe(
+      'none',
+    )
+    expect(getComputedStyle(document.querySelector<HTMLElement>('.promises')!).display).not.toBe(
+      'none',
+    )
+  })
+
+  it('🔴 keeps a leak alert visible on both tabs', async () => {
+    // 安全告警不该被藏在某个未选中的标签里。
+    nextSnapshot = snapshot({ group: group(), lastError: errors.proxyLeakSuspected() })
+    await mountPopup()
+    openNodesTab()
+
+    const alert = document.querySelector<HTMLElement>('#alert')
+    expect(alert?.hidden).toBe(false)
+    expect(getComputedStyle(alert!).display).not.toBe('none')
+  })
+})
+
+describe('V0.3 延迟徽章', () => {
+  it('shows the measured delay next to each node', async () => {
+    nextSnapshot = snapshot({
+      group: group({ latency: { 'HK-01': 42, 'JP-02': 310 } }),
+    })
+    await mountPopup()
+
+    const badges = [...document.querySelectorAll<HTMLElement>('.latency')]
+    expect(badges.map((b) => b.textContent)).toEqual(['42 ms', '310 ms'])
+  })
+
+  it('tiers the badges so they can be scanned by colour', async () => {
+    nextSnapshot = snapshot({
+      group: group({ nodes: ['a', 'b', 'c'], now: 'x', latency: { a: 80, b: 350, c: 900 } }),
+    })
+    await mountPopup()
+
+    const tiers = [...document.querySelectorAll<HTMLElement>('.latency')].map(
+      (b) => b.dataset.tier,
+    )
+    expect(tiers).toEqual(['fast', 'medium', 'slow'])
+  })
+
+  it('🔴 shows a dash rather than 0 ms when there is no measurement', async () => {
+    // 内核用 delay===0 表示测试失败。渲染成 "0 ms" 会被读作"极快"。
+    nextSnapshot = snapshot({ group: group({ latency: { 'HK-01': null, 'JP-02': null } }) })
+    await mountPopup()
+
+    const badges = [...document.querySelectorAll<HTMLElement>('.latency')]
+    expect(badges.every((b) => b.textContent === '—')).toBe(true)
+    expect(badges.some((b) => b.textContent?.includes('0'))).toBe(false)
+  })
+
+  it('the test button is hidden when there are no nodes to measure', async () => {
+    nextSnapshot = snapshot({ groupError: errors.groupNotConfigured() })
+    await mountPopup()
+
+    expect(document.querySelector<HTMLElement>('#test-latency')?.hidden).toBe(true)
+  })
+
+  it('🔴 never tests latency just because the popup opened', async () => {
+    /*
+     * 技术方案 §17 / ADR-32：一次全量测速会让内核同时向几十个节点建连。
+     * 绑在"打开 Popup"这个高频动作上等于每看一眼状态就触发一次。
+     */
+    nextSnapshot = snapshot({ group: group() })
+    await mountPopup()
+
+    expect(sent.some((m) => m.type === 'TEST_LATENCY')).toBe(false)
+  })
+
+  it('tests only when the user asks', async () => {
+    nextSnapshot = snapshot({ group: group() })
+    await mountPopup()
+    openNodesTab()
+
+    document.querySelector<HTMLButtonElement>('#test-latency')?.click()
+    await vi.waitFor(() => {
+      expect(sent.some((m) => m.type === 'TEST_LATENCY')).toBe(true)
+    })
+  })
+})
+
+describe('V0.4 分流模式', () => {
+  it('highlights the stored mode', async () => {
+    nextSnapshot = snapshot({
+      settings: { ...snapshot().settings, routingMode: 'direct' },
+    })
+    await mountPopup()
+
+    const checked = [...document.querySelectorAll<HTMLElement>('.mode-btn')]
+      .filter((b) => b.getAttribute('aria-checked') === 'true')
+      .map((b) => b.dataset.mode)
+    expect(checked).toEqual(['direct'])
+  })
+
+  it('🔴 shows global when smart is stored but no rules exist', async () => {
+    /*
+     * buildProxyConfig 在没有规则时确实退回了 fixed_servers（proxy.ts）。
+     * UI 必须显示浏览器的**实际行为**，显示"智能"却在走全局就是骗人。
+     */
+    nextSnapshot = snapshot({
+      settings: { ...snapshot().settings, routingMode: 'smart', directRules: [] },
+    })
+    await mountPopup()
+
+    const checked = [...document.querySelectorAll<HTMLElement>('.mode-btn')]
+      .filter((b) => b.getAttribute('aria-checked') === 'true')
+      .map((b) => b.dataset.mode)
+    expect(checked).toEqual(['global'])
+    expect(document.querySelector('#modes-hint')?.textContent).toContain('Settings')
+  })
+
+  it('highlights smart once rules exist', async () => {
+    nextSnapshot = snapshot({
+      settings: { ...snapshot().settings, routingMode: 'smart', directRules: ['*.edu.cn'] },
+    })
+    await mountPopup()
+
+    const checked = [...document.querySelectorAll<HTMLElement>('.mode-btn')]
+      .filter((b) => b.getAttribute('aria-checked') === 'true')
+      .map((b) => b.dataset.mode)
+    expect(checked).toEqual(['smart'])
+  })
+
+  it('saves the mode when a different one is clicked', async () => {
+    nextSnapshot = snapshot()
+    await mountPopup()
+
+    document.querySelector<HTMLButtonElement>('.mode-btn[data-mode="direct"]')?.click()
+    await vi.waitFor(() => {
+      expect(sent.some((m) => m.type === 'SAVE_SETTINGS')).toBe(true)
+    })
+  })
+
+  it('does not re-save the mode that is already active', async () => {
+    // 点当前项是无操作，发一次写请求只会白重写一遍 chrome.proxy。
+    nextSnapshot = snapshot()
+    await mountPopup()
+
+    document.querySelector<HTMLButtonElement>('.mode-btn[data-mode="global"]')?.click()
+    await Promise.resolve()
+
+    expect(sent.some((m) => m.type === 'SAVE_SETTINGS')).toBe(false)
   })
 })

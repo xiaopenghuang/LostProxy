@@ -46,6 +46,13 @@ const EXPECTED_SELF_HEALING: Record<ErrorCode, boolean> = {
   GROUP_NOT_FOUND: false,
   GROUP_NOT_SELECTABLE: false,
   SELECT_FAILED: false,
+  /*
+   * V0.3 / V0.6 也是 false，理由同上一组：它们只通过响应信封回给发起操作的 UI，
+   * 不写入 lastError，因此不走自愈路径。将来若有人把它们写进 lastError，
+   * false（告警留着）是安全方向。
+   */
+  LATENCY_TEST_FAILED: false,
+  SUBS_UPDATE_FAILED: false,
   UNKNOWN: false,
 }
 

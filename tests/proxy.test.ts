@@ -315,3 +315,59 @@ describe('registerProxyErrorListener', () => {
     expect(received[0]?.message).toMatch(/may have been exposed/i)
   })
 })
+
+// ===========================================================================
+// V0.4 分流模式
+// ===========================================================================
+
+describe('buildProxyConfig · 分流模式', () => {
+  const smart = (rules: readonly string[]) =>
+    buildProxyConfig({ ...DEFAULT_SETTINGS, routingMode: 'smart', directRules: rules })
+
+  it('uses fixed_servers for global mode', () => {
+    const config = buildProxyConfig({ ...DEFAULT_SETTINGS, routingMode: 'global' })
+    expect(config.mode).toBe('fixed_servers')
+  })
+
+  it('uses pac_script for smart mode with rules', () => {
+    expect(smart(['*.edu.cn']).mode).toBe('pac_script')
+  })
+
+  it('🔴 always sets mandatory: true on the PAC script', () => {
+    /*
+     * security.md §4：PAC 默认 fail-open —— 脚本无效时浏览器**静默退回直连**，
+     * 与 fixed_servers 的失败语义正好相反。漏掉这个字段就等于把 V0.1
+     * 辛苦建立的 fail-closed 语义作废，且完全无声。
+     *
+     * 这是整个 V0.4 里最不能错的一格。
+     */
+    expect(smart(['*.edu.cn']).pacScript?.mandatory).toBe(true)
+  })
+
+  it('🔴 falls back to fixed_servers when smart has no usable rules', () => {
+    /*
+     * 空清单时生成 PAC 没有意义（行为等同全局），而 fixed_servers 更简单、
+     * 更可预测，且不必让每个请求都执行一次 JS。
+     * 更重要的是：这样就不存在"空规则的 PAC 脚本"这种边界形态。
+     */
+    expect(smart([]).mode).toBe('fixed_servers')
+    // 全部规则都非法时同理 —— 不能因为清单非空就生成脚本。
+    expect(smart(["bad'", 'also:bad']).mode).toBe('fixed_servers')
+  })
+
+  it('uses inline data rather than a remote URL', () => {
+    /*
+     * 用 url 会引入"取不到脚本"这个额外的失败模式（也是 fail-open 的触发点之一）。
+     * 内联 data 从根上消除它（ADR-33）。
+     */
+    const config = smart(['*.edu.cn'])
+    expect(config.pacScript?.data).toBeTruthy()
+    expect(config.pacScript?.url).toBeUndefined()
+  })
+
+  it('🔴 the generated script never contains a DIRECT fallback after PROXY', () => {
+    // "PROXY x; DIRECT" 会让代理连不上时静默直连。
+    const data = smart(['*.edu.cn']).pacScript?.data ?? ''
+    expect(data).not.toMatch(/PROXY[^"']*;\s*DIRECT/)
+  })
+})

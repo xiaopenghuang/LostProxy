@@ -731,6 +731,9 @@ describe('collectStatus · 策略组', () => {
       type: 'Selector',
       now: 'HK-01',
       nodes: ['HK-01', 'HK-02'],
+      // V0.3：延迟从 /proxies 的 history 读取。这个桩没提供 history，
+      // 所以两个节点都是 null —— null 而非 0，因为 0 会被渲染成"0ms"。
+      latency: { 'HK-01': null, 'HK-02': null },
     })
   })
 

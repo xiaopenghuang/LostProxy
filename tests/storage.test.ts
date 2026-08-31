@@ -311,6 +311,8 @@ describe('toSettingsView', () => {
       webRtcLockEnabled: false,
       language: 'zh',
       primaryGroup: '🇭🇰 香港 | 专线',
+      routingMode: 'smart',
+      directRules: ['*.edu.cn'],
     })
 
     expect(view).toEqual({
@@ -324,6 +326,8 @@ describe('toSettingsView', () => {
       // 组名原样透传：含空格 / `|` / emoji 都不得被改写，
       // 否则发回内核时匹配不上（ADR-30）。
       primaryGroup: '🇭🇰 香港 | 专线',
+      routingMode: 'smart',
+      directRules: ['*.edu.cn'],
     })
   })
 })

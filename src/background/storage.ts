@@ -18,10 +18,19 @@
  *    而不是被静默纠正成默认值——那会让人以为端口改成功了。
  */
 
-import { DEFAULT_SETTINGS, PORT_MAX, PORT_MIN, STORAGE_KEYS } from '../shared/constants'
+import {
+  DEFAULT_SETTINGS,
+  PORT_MAX,
+  PORT_MIN,
+  RULE_ALLOWED_PATTERN,
+  RULE_MAX_COUNT,
+  RULE_MAX_LENGTH,
+  STORAGE_KEYS,
+} from '../shared/constants'
 import type { Language, MessageKey, MessageParams } from '../shared/i18n'
 import type {
   NormalizedError,
+  RoutingMode,
   Settings,
   SettingsView,
   ValidationIssue,
@@ -53,6 +62,10 @@ function isValidPort(value: unknown): value is number {
 /** 语言偏好是否合法。 */
 function isValidLanguage(value: unknown): value is Language {
   return value === 'auto' || value === 'zh' || value === 'en'
+}
+
+function isValidRoutingMode(value: unknown): value is RoutingMode {
+  return value === 'global' || value === 'smart' || value === 'direct'
 }
 
 /**
@@ -93,6 +106,27 @@ export function coerceSettings(raw: unknown): Settings {
      */
     primaryGroup:
       typeof input.primaryGroup === 'string' ? input.primaryGroup : DEFAULT_SETTINGS.primaryGroup,
+    routingMode: isValidRoutingMode(input.routingMode)
+      ? input.routingMode
+      : DEFAULT_SETTINGS.routingMode,
+    /*
+     * 宽容读取但**不宽容内容**：非法条目直接丢弃而不是原样留下。
+     *
+     * 这一步是防「storage 里的旧数据或被篡改的数据绕过 validateSettings」——
+     * coerce 走的是读取路径，validate 走的是写入路径，两条路都得堵上，
+     * 否则一条脏规则一旦落盘就会每次读取都被送进 PAC 生成器。
+     */
+    directRules: Array.isArray(input.directRules)
+      ? Object.freeze(
+          input.directRules.filter(
+            (r): r is string =>
+              typeof r === 'string' &&
+              r.trim().length > 0 &&
+              r.trim().length <= RULE_MAX_LENGTH &&
+              RULE_ALLOWED_PATTERN.test(r.trim()),
+          ),
+        )
+      : DEFAULT_SETTINGS.directRules,
   }
 }
 
@@ -145,6 +179,46 @@ export function validateSettings(patch: Partial<Settings>, base: Settings): Vali
    */
   if (patch.primaryGroup !== undefined && typeof patch.primaryGroup !== 'string') {
     add('validation.primaryGroup')
+  }
+
+  if (patch.routingMode !== undefined && !isValidRoutingMode(patch.routingMode)) {
+    add('validation.routingMode')
+  }
+
+  /*
+   * 🔴 直连规则是 PAC 注入面的第一道防线（security.md §4.1 / ADR-33）。
+   *
+   * 白名单而非黑名单：黑名单漏一个字符就是一个注入口，而注入成功会生成一个
+   * 「一切都直连」的脚本 —— 语法合法、mandatory 拦不住、浏览器不报错，
+   * 用户以为配了分流实际全程裸奔。
+   *
+   * pac.ts 里还会再过一遍同样的白名单。两道都要：这里负责给用户
+   * 可操作的错误提示，那里负责在任何调用路径下都不生成危险脚本。
+   */
+  if (patch.directRules !== undefined) {
+    if (!Array.isArray(patch.directRules)) {
+      add('validation.ruleInvalidChar', { rule: String(patch.directRules) })
+    } else if (patch.directRules.length > RULE_MAX_COUNT) {
+      add('validation.rulesTooMany', { count: patch.directRules.length, max: RULE_MAX_COUNT })
+    } else {
+      for (const rule of patch.directRules) {
+        if (typeof rule !== 'string') {
+          add('validation.ruleInvalidChar', { rule: String(rule) })
+          break
+        }
+        const trimmed = rule.trim()
+        if (trimmed.length === 0) continue
+        if (trimmed.length > RULE_MAX_LENGTH) {
+          add('validation.ruleTooLong', { rule: trimmed.slice(0, 40), max: RULE_MAX_LENGTH })
+          break
+        }
+        if (!RULE_ALLOWED_PATTERN.test(trimmed)) {
+          // 只回显前 40 字符：规则可能很长，而错误文案要能读。
+          add('validation.ruleInvalidChar', { rule: trimmed.slice(0, 40) })
+          break
+        }
+      }
+    }
   }
 
   if (issues.length > 0) {
@@ -258,5 +332,8 @@ export function toSettingsView(settings: Settings): SettingsView {
     language: settings.language,
     // 非敏感，UI 需要它显示当前选中的组（决定 exposed 的过程见 types.ts）。
     primaryGroup: settings.primaryGroup,
+    // 非敏感：分流模式与直连域名都是用户自己填的，UI 需要回显。
+    routingMode: settings.routingMode,
+    directRules: settings.directRules,
   }
 }

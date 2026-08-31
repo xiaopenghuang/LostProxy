@@ -31,7 +31,9 @@
       </header>
 
       <!-- 主状态卡片。data-on 驱动 accent 反馈，让"开没开"在余光里就能看出来。
-           data-loading 期间旋钮居中变淡 —— 状态未知时不假装"关着"。 -->
+           data-loading 期间旋钮居中变淡 —— 状态未知时不假装"关着"。
+           刻意放在标签页**外面**：开关是本插件的主体功能，
+           不该因为用户切到"节点"标签就看不见。 -->
       <section class="card" id="proxy-card" data-on="false" data-loading="true">
         <div class="card-main">
           <div class="card-text">
@@ -55,6 +57,7 @@
         告警分两级：
           warn   = 当前状态类问题，会随状态自行变化或自愈
           danger = 疑似已泄漏真实 IP，不自动消失，必须用户 Dismiss 确认
+        同样放在标签页外 —— 安全告警不该被藏在某个未选中的标签里。
       -->
       <section class="alert" id="alert" data-severity="warn" hidden>
         <span class="alert-icon" aria-hidden="true">
@@ -70,34 +73,105 @@
         </span>
         <div class="alert-body">
           <p class="alert-text" id="alert-text"></p>
-          <button type="button" id="dismiss" class="alert-dismiss" data-i18n="common.dismiss" hidden></button>
+          <button
+            type="button"
+            id="dismiss"
+            class="alert-dismiss"
+            data-i18n="common.dismiss"
+            hidden
+          ></button>
         </div>
       </section>
 
-      <section class="core">
-        <div class="core-row">
-          <span class="dot" id="core-dot" data-state="unknown"></span>
-          <span id="core-text" data-i18n="popup.coreChecking"></span>
+      <!-- 标签页。role=tablist + aria-selected 让键盘与读屏器都能正常工作。 -->
+      <div class="tabs" role="tablist">
+        <button
+          type="button"
+          class="tab"
+          id="tab-status"
+          role="tab"
+          aria-selected="true"
+          aria-controls="pane-status"
+          data-i18n="popup.tabStatus"
+        ></button>
+        <button
+          type="button"
+          class="tab"
+          id="tab-nodes"
+          role="tab"
+          aria-selected="false"
+          aria-controls="pane-nodes"
+          data-i18n="popup.tabNodes"
+        ></button>
+      </div>
+
+      <section class="pane" id="pane-status" role="tabpanel" aria-labelledby="tab-status">
+        <!-- V0.4 分流模式。三档互斥，用 radiogroup 而非三个按钮：
+             语义上它们是"选一个"，radiogroup 自带方向键切换。 -->
+        <div class="modes" role="radiogroup" aria-labelledby="modes-label">
+          <span class="modes-label" id="modes-label" data-i18n="popup.routingLabel"></span>
+          <div class="modes-row">
+            <button
+              type="button"
+              class="mode-btn"
+              role="radio"
+              aria-checked="false"
+              data-mode="global"
+              data-i18n="popup.routingGlobal"
+            ></button>
+            <button
+              type="button"
+              class="mode-btn"
+              role="radio"
+              aria-checked="false"
+              data-mode="smart"
+              data-i18n="popup.routingSmart"
+            ></button>
+            <button
+              type="button"
+              class="mode-btn"
+              role="radio"
+              aria-checked="false"
+              data-mode="direct"
+              data-i18n="popup.routingDirect"
+            ></button>
+          </div>
+          <p class="modes-hint" id="modes-hint"></p>
         </div>
-        <!--
-          仅在 Controller 不可观测时出现。这不是故障提示而是解释——
-          客户端可能刻意只开 named pipe（更安全），此时代理照常工作。
-        -->
-        <p class="core-note" id="core-note" data-i18n="popup.coreNote" hidden></p>
+
+        <div class="core">
+          <div class="core-row">
+            <span class="dot" id="core-dot" data-state="unknown"></span>
+            <span id="core-text" data-i18n="popup.coreChecking"></span>
+          </div>
+          <!--
+            仅在 Controller 不可观测时出现。这不是故障提示而是解释——
+            客户端可能刻意只开 named pipe（更安全），此时代理照常工作。
+          -->
+          <p class="core-note" id="core-note" data-i18n="popup.coreNote" hidden></p>
+        </div>
+
+        <dl class="facts">
+          <dt data-i18n="popup.modeLabel"></dt>
+          <dd id="mode-text">—</dd>
+          <dt data-i18n="popup.webrtcLabel"></dt>
+          <dd id="webrtc-text">—</dd>
+        </dl>
       </section>
 
-      <!--
-        V0.2 节点切换。
-
-        ⚠️ scope-notice 是 ADR-28 要求的边界披露，**不得删除**：
-           切节点改的是内核的全局状态，效果不限于本浏览器。这是本项目
-           第一个逸出浏览器边界的功能，而"只影响这一个浏览器"是整个
-           项目的立项理由，所以必须在用户点击的地方就说清楚。
-      -->
-      <section class="nodes" id="nodes" hidden>
+      <section class="pane" id="pane-nodes" role="tabpanel" aria-labelledby="tab-nodes" hidden>
         <div class="nodes-head">
-          <span class="nodes-label" data-i18n="popup.nodeSectionLabel"></span>
           <span class="nodes-group" id="nodes-group"></span>
+          <!-- V0.3 测速。刻意是手动触发：一次全量测速会让内核同时向几十个
+               节点建连，绑在"打开 Popup"上等于每看一眼状态就触发一次
+               （技术方案 §17 / ADR-32）。 -->
+          <button
+            type="button"
+            id="test-latency"
+            class="mini-btn"
+            data-i18n="popup.latencyTest"
+            hidden
+          ></button>
         </div>
 
         <!-- 需要配置 / 需要开外部控制时显示，替代节点列表 -->
@@ -105,17 +179,15 @@
 
         <ul class="node-list" id="node-list"></ul>
 
+        <!--
+          ⚠️ ADR-28 要求的边界披露，**不得删除**：
+             切节点改的是内核的全局状态，效果不限于本浏览器。
+        -->
         <p class="nodes-scope" id="nodes-scope" data-i18n="popup.nodeScopeNotice" hidden></p>
       </section>
 
-      <dl class="facts">
-        <dt data-i18n="popup.modeLabel"></dt>
-        <dd id="mode-text">—</dd>
-        <dt data-i18n="popup.webrtcLabel"></dt>
-        <dd id="webrtc-text">—</dd>
-      </dl>
-
-      <!-- 产品承诺的一部分，任何时候都不该消失（技术方案 §13） -->
+      <!-- 产品承诺的一部分，任何时候都不该消失（技术方案 §13）。
+           刻意在标签容器之外：切标签不该让这两行承诺消失。 -->
       <footer class="footer">
         <p class="promises">
           <span data-i18n="popup.systemProxy"></span>

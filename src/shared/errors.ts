@@ -135,6 +135,15 @@ export const errors = {
     makeError('SELECT_FAILED', 'error.selectFailed', { node }),
 
   /**
+   * V0.6：订阅更新失败。
+   *
+   * 文案点明「可能是订阅地址访问不通」—— 这是最常见的成因（机场挂了、
+   * 本机没网、订阅到期），而单说"失败"会让用户以为是插件的问题。
+   */
+  subsUpdateFailed: (name: string): NormalizedError =>
+    makeError('SUBS_UPDATE_FAILED', 'error.subsUpdateFailed', { name }),
+
+  /**
    * 设置校验失败。
    *
    * 只报**第一条**问题：NormalizedError 只能携带一个 key，

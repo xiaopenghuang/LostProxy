@@ -14,10 +14,11 @@
  * 第一次 GET_STATUS 回来才能确定语言，静态文案也在那之后才填充。
  */
 
+import { LATENCY_FAST_MS, LATENCY_MEDIUM_MS } from '../shared/constants'
 import { isLeakSuspected } from '../shared/errors'
 import { createTranslator, resolveLocale, type MessageKey } from '../shared/i18n'
 import { sendMessage } from '../shared/messages'
-import type { NormalizedError, StatusSnapshot } from '../shared/types'
+import type { NormalizedError, RoutingMode, StatusSnapshot } from '../shared/types'
 
 const el = {
   card: document.querySelector<HTMLElement>('#proxy-card'),
@@ -32,11 +33,34 @@ const el = {
   modeText: document.querySelector<HTMLElement>('#mode-text'),
   webrtcText: document.querySelector<HTMLElement>('#webrtc-text'),
   settings: document.querySelector<HTMLButtonElement>('#open-settings'),
-  nodes: document.querySelector<HTMLElement>('#nodes'),
   nodesGroup: document.querySelector<HTMLElement>('#nodes-group'),
   nodesHint: document.querySelector<HTMLElement>('#nodes-hint'),
   nodeList: document.querySelector<HTMLElement>('#node-list'),
   nodesScope: document.querySelector<HTMLElement>('#nodes-scope'),
+  testLatency: document.querySelector<HTMLButtonElement>('#test-latency'),
+  modesHint: document.querySelector<HTMLElement>('#modes-hint'),
+}
+
+/** 全部标签按钮与对应面板。 */
+const tabs = [...document.querySelectorAll<HTMLButtonElement>('.tab')]
+const modeButtons = [...document.querySelectorAll<HTMLButtonElement>('.mode-btn')]
+
+/**
+ * 切换标签页。
+ *
+ * 面板用 `hidden` 属性而非 CSS class 控制显隐 —— `[hidden]` 已经有全局
+ * `display:none !important` 兜底（ADR-26），再引入第二套机制只会多一处
+ * 可能失配的地方。
+ */
+function selectTab(id: string): void {
+  for (const tab of tabs) {
+    const active = tab.id === id
+    tab.setAttribute('aria-selected', String(active))
+    const paneId = tab.getAttribute('aria-controls')
+    if (paneId === null) continue
+    const pane = document.getElementById(paneId)
+    if (pane !== null) pane.hidden = !active
+  }
 }
 
 /** 当前翻译函数。首次 GET_STATUS 前用浏览器语言兜底，避免面板空白。 */
@@ -138,10 +162,9 @@ function renderCore(snapshot: StatusSnapshot): void {
  *    自己用 div + tabindex + keydown 复刻一遍必然漏掉某些行为。
  */
 function renderNodes(snapshot: StatusSnapshot): void {
-  const { nodes, nodesGroup, nodesHint, nodeList, nodesScope } = el
-  if (!nodes || !nodesGroup || !nodesHint || !nodeList || !nodesScope) return
+  const { nodesGroup, nodesHint, nodeList, nodesScope, testLatency } = el
+  if (!nodesGroup || !nodesHint || !nodeList || !nodesScope) return
 
-  nodes.hidden = false
   nodeList.replaceChildren()
 
   const showHint = (text: string): void => {
@@ -150,6 +173,8 @@ function renderNodes(snapshot: StatusSnapshot): void {
     nodesGroup.textContent = ''
     // 没有可点的东西时不显示边界说明 —— 那句话只在能切换时才有意义。
     nodesScope.hidden = true
+    // 同理，没有节点可测速。
+    if (testLatency) testLatency.hidden = true
   }
 
   if (snapshot.group === null) {
@@ -180,9 +205,17 @@ function renderNodes(snapshot: StatusSnapshot): void {
     const button = document.createElement('button')
     button.type = 'button'
     button.className = 'node-item'
-    // textContent 而非 innerHTML：节点名来自订阅，是不可信输入。
-    button.textContent = name
     button.dataset.node = name
+
+    /*
+     * 名字与延迟各占一个 span。
+     * textContent 而非 innerHTML：节点名来自订阅，是不可信输入。
+     */
+    const label = document.createElement('span')
+    label.className = 'node-name'
+    label.textContent = name
+    button.append(label, latencyBadge(snapshot.group.latency[name] ?? null))
+
     if (name === snapshot.group.now) {
       button.setAttribute('aria-current', 'true')
       // 当前节点点了也是同一个，禁用掉省一次无意义的往返。
@@ -195,6 +228,59 @@ function renderNodes(snapshot: StatusSnapshot): void {
 
   // ADR-28：能切换时必须显示边界说明。
   nodesScope.hidden = false
+  if (testLatency) testLatency.hidden = false
+}
+
+/**
+ * 渲染延迟徽章（V0.3）。
+ *
+ * 分档只给数值上色以加速扫视，**数值本身始终显示** ——
+ * 色觉障碍用户看不出绿/黄/红，但能读数字。
+ * 没有数据时显示 `—`，超时显示文字而非 0ms（0 会被读成"极快"）。
+ */
+function latencyBadge(delay: number | null): HTMLElement {
+  const span = document.createElement('span')
+  span.className = 'latency'
+
+  if (delay === null) {
+    span.dataset.tier = 'unknown'
+    span.textContent = t('popup.latencyUntested')
+    return span
+  }
+
+  span.dataset.tier =
+    delay <= LATENCY_FAST_MS ? 'fast' : delay <= LATENCY_MEDIUM_MS ? 'medium' : 'slow'
+  span.textContent = `${delay} ms`
+  return span
+}
+
+/**
+ * 渲染分流模式（V0.4）。
+ *
+ * smart 但没有任何规则时**按 global 高亮**，因为 `buildProxyConfig` 在那种
+ * 情况下确实退回了 fixed_servers（proxy.ts 有注释）。UI 必须显示浏览器的
+ * 实际行为，而不是用户存的偏好 —— 显示"智能"却在走全局就是骗人。
+ */
+function renderModes(snapshot: StatusSnapshot): void {
+  const stored = snapshot.settings.routingMode
+  const hasRules = snapshot.settings.directRules.length > 0
+  const effective = stored === 'smart' && !hasRules ? 'global' : stored
+
+  for (const button of modeButtons) {
+    button.setAttribute('aria-checked', String(button.dataset.mode === effective))
+  }
+
+  if (el.modesHint) {
+    if (stored === 'smart' && !hasRules) {
+      el.modesHint.textContent = t('popup.routingNeedsRules')
+    } else if (effective === 'global') {
+      el.modesHint.textContent = t('popup.routingHintGlobal')
+    } else if (effective === 'smart') {
+      el.modesHint.textContent = t('popup.routingHintSmart')
+    } else {
+      el.modesHint.textContent = t('popup.routingHintDirect')
+    }
+  }
 }
 
 function render(snapshot: StatusSnapshot): void {
@@ -218,6 +304,7 @@ function render(snapshot: StatusSnapshot): void {
   if (el.modeText) el.modeText.textContent = t(modeKey(snapshot))
   if (el.webrtcText) el.webrtcText.textContent = t(webRtcKey(snapshot))
 
+  renderModes(snapshot)
   renderNodes(snapshot)
   showAlert(snapshot.lastError)
 }
@@ -310,6 +397,65 @@ el.nodeList?.addEventListener('click', async (event) => {
    */
   await refresh()
   showAlert(response.error)
+})
+
+for (const tab of tabs) {
+  tab.addEventListener('click', () => {
+    selectTab(tab.id)
+  })
+}
+
+/*
+ * 分流模式切换（V0.4）。
+ *
+ * 选 smart 但一条规则都没有时不静默照做 —— 那会让浏览器实际走全局，
+ * 而 UI 显示"智能"。改成提示去 Settings 加规则，并把用户带过去。
+ */
+for (const button of modeButtons) {
+  button.addEventListener('click', async () => {
+    const mode = button.dataset.mode as RoutingMode | undefined
+    if (mode === undefined) return
+    if (button.getAttribute('aria-checked') === 'true') return
+
+    for (const b of modeButtons) b.disabled = true
+
+    const response = await sendMessage({ type: 'SAVE_SETTINGS', patch: { routingMode: mode } })
+
+    for (const b of modeButtons) b.disabled = false
+
+    if (!response.ok) {
+      showAlert(response.error)
+      return
+    }
+    // 保存后重新采集：改分流模式会重写 chrome.proxy，
+    // 必须让 UI 反映浏览器的实际状态而不是我们刚发出的意图。
+    await refresh()
+  })
+}
+
+/*
+ * 测速（V0.3）。手动触发是刻意的：一次全量测速会让内核同时向几十个节点
+ * 建连，绑在"打开 Popup"上等于每看一眼状态就触发一次（§17 / ADR-32）。
+ */
+el.testLatency?.addEventListener('click', async () => {
+  const button = el.testLatency
+  if (!button) return
+
+  const original = button.textContent
+  button.disabled = true
+  button.textContent = t('popup.latencyTesting')
+
+  const response = await sendMessage({ type: 'TEST_LATENCY' })
+
+  button.disabled = false
+  button.textContent = original
+
+  if (response.ok) {
+    render(response.data)
+  } else {
+    await refresh()
+    showAlert(response.error)
+  }
 })
 
 el.settings?.addEventListener('click', () => {

@@ -62,6 +62,28 @@ const EN = {
   'popup.systemProxy': 'System Proxy',
   'popup.tun': 'TUN',
 
+  // ---- 标签页 ----
+  'popup.tabStatus': 'Status',
+  'popup.tabNodes': 'Nodes',
+
+  // ---- V0.4 分流模式 ----
+  'popup.routingLabel': 'Routing',
+  'popup.routingGlobal': 'Global',
+  'popup.routingSmart': 'Smart',
+  'popup.routingDirect': 'Direct',
+  'popup.routingHintGlobal': 'Every request from this browser goes through the proxy.',
+  'popup.routingHintSmart':
+    'Your direct-connect list bypasses the proxy; everything else goes through it. Edit the list in Settings.',
+  'popup.routingHintDirect':
+    'This browser connects directly. The proxy stays configured but unused.',
+  'popup.routingNeedsRules': 'Add at least one direct-connect rule in Settings to use Smart.',
+
+  // ---- V0.3 延迟 ----
+  'popup.latencyTest': 'Test',
+  'popup.latencyTesting': 'Testing…',
+  'popup.latencyTimeout': 'timeout',
+  'popup.latencyUntested': '—',
+
   // ---- V0.2 节点切换 ----
   'popup.nodeSectionLabel': 'Node',
   'popup.nodeLoading': 'Loading nodes…',
@@ -160,6 +182,18 @@ const EN = {
   'validation.primaryGroup': 'Primary proxy group must be a string.',
 
   // ---- V0.2 Settings：主策略组 ----
+  'options.sectionConnection': 'Connection',
+  'options.sectionRouting': 'Nodes & Routing',
+  'options.sectionMaintenance': 'Subscriptions & Safety',
+  'options.tagNoSave': 'applies at once',
+  'options.unsavedNote': 'You have unsaved changes.',
+  'options.probePort': 'Detect port',
+  'options.probing': 'Detecting…',
+  'options.probeFound':
+    'Found a controller on port {port}. Filled in above — review it and press Save.',
+  'options.probeNotFound':
+    'No controller found on the usual ports. Check that external control is enabled in your Mihomo client, then enter the port manually.',
+
   'options.groupSectionTitle': 'Proxy Group',
   'options.groupSectionHint':
     'Which policy group LostProxy switches nodes in. Group names differ between providers, so this is never guessed — load the list and pick yours.',
@@ -176,6 +210,51 @@ const EN = {
    */
   'options.groupTypeNote': '{type} — picks nodes automatically, cannot be switched by hand',
   'options.groupTypeSelector': 'Selector — switchable',
+
+  // ---- V0.4 直连规则 ----
+  'options.rulesSectionTitle': 'Direct-connect Rules',
+  'options.rulesSectionHint':
+    'Hosts matched here bypass the proxy in Smart mode. One per line. Wildcards allowed, e.g. *.edu.cn — no schemes, no paths, no ports.',
+  'options.rulesLabel': 'Direct-connect list',
+  'options.rulesPlaceholder': '*.edu.cn\n*.cnki.net\nlib.example.edu',
+  'options.rulesCount': '{count} rule(s) saved.',
+  'options.rulesNeedRules': 'Smart mode needs at least one rule; the mode falls back to Global.',
+  /*
+   * 注入被拒时的文案刻意说明「哪一条」和「为什么」——
+   * 只说"格式错误"会让用户反复试而不知道问题在哪。
+   */
+  'validation.ruleInvalidChar':
+    'Rule "{rule}" contains a character that is not allowed. Use only letters, digits, dots, hyphens and *.',
+  'validation.ruleTooLong': 'Rule "{rule}" is too long (max {max} characters).',
+  'validation.rulesTooMany': 'Too many rules ({count}); the maximum is {max}.',
+  'validation.routingMode': 'Routing mode must be global, smart or direct.',
+
+  // ---- V0.6 订阅 ----
+  'options.subsSectionTitle': 'Subscriptions',
+  /*
+   * 如实说明「只能更新，不能增删」及其原因。用户看到一个只有更新按钮的
+   * 列表会以为功能没做完，说清是上游的安全设计，就不会去找那个不存在的按钮。
+   */
+  'options.subsSectionHint':
+    'Subscriptions live in the core, so they can be refreshed from here but not added or removed — the core deliberately does not expose config-file writes over its API. Add or delete them in your Mihomo client.',
+  'options.subsLoadButton': 'Load subscriptions',
+  'options.subsLoading': 'Loading…',
+  'options.subsUpdate': 'Update',
+  'options.subsUpdating': 'Updating…',
+  'options.subsUpdated': 'Updated {name}.',
+  'options.subsNodeCount': '{count} nodes',
+  'options.subsNever': 'never updated',
+  'options.subsUpdatedAt': 'updated {time}',
+  'options.subsEmpty':
+    'The core reports no proxy-providers at all. If you use a GUI client like Clash Verge, that is expected: it fetches your subscription itself and hands the core a flat proxy list, so the core never sees a subscription. Refresh it from your client instead.',
+  'options.subsNotUpdatable':
+    '{type} — not a remote subscription, so it cannot be refreshed from here.',
+  'options.subsFlattenedNote':
+    'Only remote (HTTP) providers can be refreshed. Anything else is supplied by your client or your config file.',
+  'options.subsNeedsController':
+    'Cannot reach the controller. Save the controller settings above first.',
+  'error.subsUpdateFailed':
+    'Could not update "{name}". The core rejected the request — the subscription URL may be unreachable.',
 } as const
 
 /** 所有可用文案键。由英文字典自动推导，无需手工维护联合类型。 */
@@ -226,6 +305,27 @@ const ZH: Record<MessageKey, string> = {
   'popup.webrtcOff': '锁定已关闭',
   'popup.systemProxy': '系统代理',
   'popup.tun': 'TUN',
+
+  // ---- 标签页 ----
+  'popup.tabStatus': '状态',
+  'popup.tabNodes': '节点',
+
+  // ---- V0.4 分流模式 ----
+  'popup.routingLabel': '分流',
+  'popup.routingGlobal': '全局',
+  'popup.routingSmart': '智能',
+  'popup.routingDirect': '直连',
+  'popup.routingHintGlobal': '本浏览器的所有请求都走代理。',
+  'popup.routingHintSmart':
+    '直连清单里的域名绕过代理，其余走代理。清单在设置里编辑。',
+  'popup.routingHintDirect': '本浏览器直连。代理配置保留但不使用。',
+  'popup.routingNeedsRules': '智能分流需要至少一条直连规则，请先到设置里添加。',
+
+  // ---- V0.3 延迟 ----
+  'popup.latencyTest': '测速',
+  'popup.latencyTesting': '测速中…',
+  'popup.latencyTimeout': '超时',
+  'popup.latencyUntested': '—',
 
   // ---- V0.2 节点切换 ----
   'popup.nodeSectionLabel': '节点',
@@ -312,6 +412,17 @@ const ZH: Record<MessageKey, string> = {
   'validation.primaryGroup': '主策略组必须是字符串。',
 
   // ---- V0.2 设置：主策略组 ----
+  'options.sectionConnection': '连接',
+  'options.sectionRouting': '节点与分流',
+  'options.sectionMaintenance': '订阅与安全',
+  'options.tagNoSave': '即时生效',
+  'options.unsavedNote': '有改动尚未保存。',
+  'options.probePort': '自动探测端口',
+  'options.probing': '探测中…',
+  'options.probeFound': '在 {port} 端口找到了控制端，已填进上面 —— 核对一下然后点保存。',
+  'options.probeNotFound':
+    '常见端口上都没找到控制端。请确认 Mihomo 客户端里开启了「外部控制」，然后手动填端口。',
+
   'options.groupSectionTitle': '策略组',
   'options.groupSectionHint':
     'LostProxy 在哪个策略组里切节点。不同机场的组名各不相同，所以此处不做任何猜测 —— 点下面的按钮把列表拉下来，自己选。',
@@ -324,6 +435,41 @@ const ZH: Record<MessageKey, string> = {
     '连不上控制端。请先保存上面的控制端地址、端口和密钥，再读取策略组。',
   'options.groupTypeNote': '{type} —— 自动挑节点，不能手动切换',
   'options.groupTypeSelector': 'Selector —— 可手动切换',
+
+  // ---- V0.4 直连规则 ----
+  'options.rulesSectionTitle': '直连规则',
+  'options.rulesSectionHint':
+    '智能分流模式下，匹配到这里的域名绕过代理。一行一条，支持通配符如 *.edu.cn —— 不要带协议、路径或端口。',
+  'options.rulesLabel': '直连清单',
+  'options.rulesPlaceholder': '*.edu.cn\n*.cnki.net\nlib.example.edu',
+  'options.rulesCount': '已保存 {count} 条规则。',
+  'options.rulesNeedRules': '智能分流至少需要一条规则，否则会退回全局模式。',
+  'validation.ruleInvalidChar':
+    '规则「{rule}」含有不允许的字符。只能用字母、数字、点、连字符和 *。',
+  'validation.ruleTooLong': '规则「{rule}」太长了（最多 {max} 个字符）。',
+  'validation.rulesTooMany': '规则太多了（{count} 条），上限是 {max} 条。',
+  'validation.routingMode': '分流模式必须是 global、smart 或 direct。',
+
+  // ---- V0.6 订阅 ----
+  'options.subsSectionTitle': '订阅',
+  'options.subsSectionHint':
+    '订阅存在内核里，所以这里能刷新但不能增删 —— 内核刻意不通过 API 开放配置文件写入。增删请到 Mihomo 客户端操作。',
+  'options.subsLoadButton': '读取订阅',
+  'options.subsLoading': '读取中…',
+  'options.subsUpdate': '更新',
+  'options.subsUpdating': '更新中…',
+  'options.subsUpdated': '已更新 {name}。',
+  'options.subsNodeCount': '{count} 个节点',
+  'options.subsNever': '从未更新',
+  'options.subsUpdatedAt': '更新于 {time}',
+  'options.subsEmpty':
+    '内核里没有任何 proxy-provider。如果你用的是 Clash Verge 这类客户端，这是正常的 —— 它会自己把订阅拉下来、展平成一份节点列表再交给内核，内核压根看不到「订阅」这回事。要更新订阅请在客户端里操作。',
+  'options.subsNotUpdatable': '{type} —— 不是远端订阅，没法从这里刷新。',
+  'options.subsFlattenedNote':
+    '只有远端（HTTP）类型的订阅能从这里刷新。其余的来自你的客户端或配置文件。',
+  'options.subsNeedsController': '连不上控制端。请先保存上面的控制端设置。',
+  'error.subsUpdateFailed':
+    '更新「{name}」失败，内核拒绝了这次请求 —— 可能是订阅地址访问不通。',
 }
 
 const DICTIONARIES: Record<Locale, Record<MessageKey, string>> = { en: EN, zh: ZH }

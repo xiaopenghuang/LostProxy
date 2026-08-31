@@ -53,6 +53,10 @@ describe('dictionary consistency', () => {
       'popup.webrtcLabel',
       'popup.tun',
       'options.secretPlaceholderSaved',
+      // 破折号占位符，没有可翻译的内容。
+      'popup.latencyUntested',
+      // 域名示例。翻译域名会得到一批不存在的站点，比不翻译更糟。
+      'options.rulesPlaceholder',
     ])
     if (intentionallyIdentical.has(key)) return
 

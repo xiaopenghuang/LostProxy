@@ -10,16 +10,27 @@
  *   本文件里凡是构造字符串的地方都要按这条自查。
  */
 
-import { CORE_PROBE_TIMEOUT_MS } from '../shared/constants'
+import {
+  CORE_PROBE_TIMEOUT_MS,
+  LATENCY_TEST_URL,
+  LATENCY_TIMEOUT_MS,
+  PORT_PROBE_TIMEOUT_MS,
+} from '../shared/constants'
 import { errors } from '../shared/errors'
 import type {
   ApplyResult,
   GroupsResult,
   MihomoVersion,
   NormalizedError,
+  ProviderView,
   ProxyGroup,
   Settings,
 } from '../shared/types'
+
+/** `GET /providers/proxies` 的归一化结果。 */
+export type ProvidersResult =
+  | { readonly ok: true; readonly providers: readonly ProviderView[] }
+  | { readonly ok: false; readonly error: NormalizedError }
 
 /** 探活结果。 */
 export type ProbeResult =
@@ -165,6 +176,38 @@ function parseGroup(raw: unknown): ProxyGroup | null {
 }
 
 /**
+ * 从 `/proxies` 响应里抽取每个节点的最近延迟（V0.3）。
+ *
+ * 数据来自内核自己的 health-check 产生的 `history`，**读它不产生任何额外网络行为**
+ * （ADR-32）。这就是「Popup 打开时显示延迟」能做到零额外请求的原因。
+ *
+ * `history` 是按时间升序的数组，取最后一条即最近一次。
+ * `delay === 0` 在内核语义里表示**测试失败**，不是"0 毫秒"，
+ * 所以映射成 null 而不是 0 —— 渲染成 "0ms" 会被读作极快。
+ */
+export function extractLatency(payload: unknown): Record<string, number | null> {
+  const out: Record<string, number | null> = {}
+  if (typeof payload !== 'object' || payload === null) return out
+
+  const proxies = (payload as Record<string, unknown>)['proxies']
+  if (typeof proxies !== 'object' || proxies === null) return out
+
+  for (const [name, raw] of Object.entries(proxies as Record<string, unknown>)) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const history = (raw as Record<string, unknown>)['history']
+    if (!Array.isArray(history) || history.length === 0) continue
+
+    const last = history[history.length - 1]
+    if (typeof last !== 'object' || last === null) continue
+
+    const delay = (last as Record<string, unknown>)['delay']
+    out[name] = typeof delay === 'number' && delay > 0 ? delay : null
+  }
+
+  return out
+}
+
+/**
  * `GET /group` —— 拉取全部策略组。
  *
  * 用 `/group` 而不是 `/proxies`：后者返回**所有** proxy（含每一个节点），
@@ -269,4 +312,222 @@ export async function selectNode(
   }
 
   return { ok: true }
+}
+
+/**
+ * `GET /proxies` —— 只为取 history 里的延迟（V0.3）。
+ *
+ * 为什么不复用 `/group`：组对象的 `all` 只有成员**名字**，没有各成员的 history。
+ * 延迟数据在 `/proxies` 里（那是全部 proxy 的字典）。两个端点各取所需：
+ * `/group` 拿结构，`/proxies` 拿延迟。
+ *
+ * 失败时返回空字典而非错误 —— 延迟是**装饰性信息**，取不到应该表现为
+ * "没有延迟显示"，不该让整个节点列表变成一个错误页。
+ */
+export async function getLatencies(settings: Settings): Promise<Record<string, number | null>> {
+  try {
+    const response = await fetch(`${controllerBaseUrl(settings)}/proxies`, {
+      method: 'GET',
+      headers: buildHeaders(settings.controllerSecret),
+      signal: AbortSignal.timeout(CORE_PROBE_TIMEOUT_MS),
+    })
+    if (!response.ok) return {}
+    return extractLatency(await response.json())
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * `GET /group/{name}/delay` —— 对整个策略组测速（V0.3）。
+ *
+ * 用组测速而不是逐个节点发请求：内核会并发处理并一次性返回
+ * `{"节点A": 120, "节点B": 350}`，比我们自己发 N 个请求快得多，
+ * 也少 N-1 次往返。
+ *
+ * ⚠️ `timeout` 上限 32767 —— 内核侧是 16 位解析，传更大的值会得到 400（ADR-32）。
+ */
+export async function testGroupDelay(
+  settings: Settings,
+  group: string,
+): Promise<Record<string, number | null>> {
+  const params = new URLSearchParams({
+    url: LATENCY_TEST_URL,
+    timeout: String(LATENCY_TIMEOUT_MS),
+  })
+  const url = `${controllerBaseUrl(settings)}/group/${encodeGroupName(group)}/delay?${params}`
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: buildHeaders(settings.controllerSecret),
+      // 测速本身要等最慢的节点，超时必须比单次测速上限更宽裕。
+      signal: AbortSignal.timeout(LATENCY_TIMEOUT_MS + CORE_PROBE_TIMEOUT_MS),
+    })
+    if (!response.ok) return {}
+
+    const payload: unknown = await response.json()
+    if (typeof payload !== 'object' || payload === null) return {}
+
+    const out: Record<string, number | null> = {}
+    for (const [name, delay] of Object.entries(payload as Record<string, unknown>)) {
+      // 内核对失败的节点返回 0 或干脆不列出。0 映射成 null（见 extractLatency）。
+      out[name] = typeof delay === 'number' && delay > 0 ? delay : null
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * `GET /providers/proxies` —— 列出订阅（V0.6）。
+ *
+ * 🔴 响应里**没有订阅 URL**，内核不提供。这正是本项目乐于接受的限制：
+ *    不经手就不会泄漏（ADR-34）。若将来内核加了这个字段，
+ *    我们也不该读取它。
+ */
+export async function getProviders(settings: Settings): Promise<ProvidersResult> {
+  const url = `${controllerBaseUrl(settings)}/providers/proxies`
+
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'GET',
+      headers: buildHeaders(settings.controllerSecret),
+      signal: AbortSignal.timeout(CORE_PROBE_TIMEOUT_MS),
+    })
+  } catch {
+    return { ok: false, error: errors.coreOffline(settings.controllerHost, settings.controllerPort) }
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    return { ok: false, error: errors.coreAuthFailed() }
+  }
+  if (!response.ok) return { ok: false, error: errors.coreBadResponse() }
+
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    return { ok: false, error: errors.coreBadResponse() }
+  }
+
+  if (typeof payload !== 'object' || payload === null) {
+    return { ok: false, error: errors.coreBadResponse() }
+  }
+  const raw = (payload as Record<string, unknown>)['providers']
+  if (typeof raw !== 'object' || raw === null) {
+    return { ok: false, error: errors.coreBadResponse() }
+  }
+
+  const providers: ProviderView[] = []
+  for (const [name, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const e = entry as Record<string, unknown>
+
+    /*
+     * 全部列出，用 `updatable` 标注哪些能更新（types.ts 有详述）。
+     *
+     * 只有 HTTP 类型有远端可拉。但**不过滤掉其余的** —— 用 Clash Verge 的用户
+     * 通常一个 HTTP provider 都没有（Verge 在外部把订阅拉好、展平成 `proxies:`
+     * 再交给内核），过滤后他会看到"没有任何订阅"，而他明明有订阅。
+     * 那句话技术上正确但实际误导。
+     *
+     * ⚠️ 这里也是不读 `url` / `subscriptionInfo` 的地方。内核确实在
+     *    `providerForApi` 里带了 `subscriptionInfo`，但那是流量/到期信息，
+     *    与订阅地址同属敏感面，本项目一律不经手（ADR-34）。
+     */
+    const type = typeof e['vehicleType'] === 'string' ? e['vehicleType'] : 'Unknown'
+    const proxies = e['proxies']
+
+    providers.push({
+      name,
+      nodeCount: Array.isArray(proxies) ? proxies.length : 0,
+      updatedAt: typeof e['updatedAt'] === 'string' ? e['updatedAt'] : null,
+      type,
+      updatable: type === 'HTTP',
+    })
+  }
+
+  // 可更新的排前面 —— 那才是用户到这一栏来想做的事。
+  providers.sort((a, b) => {
+    if (a.updatable !== b.updatable) return a.updatable ? -1 : 1
+    return a.name < b.name ? -1 : 1
+  })
+  return { ok: true, providers }
+}
+
+/**
+ * `PUT /providers/proxies/{name}` —— 触发订阅更新（V0.6）。
+ *
+ * 这是 V0.6 唯一的写操作。添加与删除订阅需要写 config.yaml，
+ * 而内核刻意不通过 API 开放文件写入（ADR-34）。
+ */
+export async function updateProvider(settings: Settings, name: string): Promise<ApplyResult> {
+  const url = `${controllerBaseUrl(settings)}/providers/proxies/${encodeGroupName(name)}`
+
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'PUT',
+      headers: buildHeaders(settings.controllerSecret),
+      // 订阅更新要从机场拉配置，比本机操作慢得多，给足时间。
+      signal: AbortSignal.timeout(30_000),
+    })
+  } catch {
+    return { ok: false, error: errors.coreOffline(settings.controllerHost, settings.controllerPort) }
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    return { ok: false, error: errors.coreAuthFailed() }
+  }
+  if (!response.ok) {
+    // 最常见的失败是订阅地址访问不通（机场挂了 / 本机没网 / 订阅过期）。
+    return { ok: false, error: errors.subsUpdateFailed(name) }
+  }
+
+  return { ok: true }
+}
+
+/**
+ * 探测本机在监听哪个 Controller 端口。
+ *
+ * 为什么需要这个：本项目默认 9090，而 Clash Verge Rev 实际是 9097，用户改过
+ * 混合端口后 Controller 通常仍在 9097。「端口填错」是开发期间实测的头号失败原因
+ * （test-plan §0.2），而它的症状（灰点 / 网页打不开）完全不指向真实原因。
+ *
+ * 手段是逐个试候选端口的 `/version`。**不做端口扫描** —— 只试一个短的、
+ * 由已知客户端默认值构成的白名单，且只连 127.0.0.1。
+ * 这与「扫描用户机器」是两件事：我们不枚举范围，只验证几个公开的默认值。
+ *
+ * 401/403 也算命中：那说明端口上确实是 mihomo，只是需要密钥 ——
+ * 对「帮用户找到端口」这个目的来说，这就是成功。
+ */
+export async function probeControllerPort(
+  settings: Settings,
+  candidates: readonly number[],
+): Promise<number | null> {
+  for (const port of candidates) {
+    const probe = { ...settings, controllerPort: port }
+    try {
+      const response = await fetch(`${controllerBaseUrl(probe)}/version`, {
+        method: 'GET',
+        headers: buildHeaders(settings.controllerSecret),
+        // 逐个试，超时必须短 —— 候选有五六个，每个等 3 秒会让用户以为卡死。
+        signal: AbortSignal.timeout(PORT_PROBE_TIMEOUT_MS),
+      })
+
+      // 有 mihomo 在这个端口上（哪怕需要密钥）。
+      if (response.status === 401 || response.status === 403) return port
+      if (!response.ok) continue
+
+      const payload: unknown = await response.json()
+      if (parseVersion(payload) !== null) return port
+    } catch {
+      // 连不上就是下一个，不算错误。
+      continue
+    }
+  }
+  return null
 }

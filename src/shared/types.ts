@@ -39,6 +39,24 @@ export interface Settings {
   /** 界面语言偏好。'auto' 表示跟随浏览器。 */
   language: Language
   /**
+   * 分流模式（V0.4）。
+   *
+   * - `global` → 全部走代理（等价于 V0.1 的 fixed_servers 行为）
+   * - `smart`  → 直连清单绕过代理，其余走代理（PAC）
+   * - `direct` → 浏览器直连，但保留代理配置
+   *
+   * 默认 `global`：它与 V0.1 的行为完全一致，升级不改变任何既有用户的实际状态。
+   */
+  routingMode: RoutingMode
+  /**
+   * 智能分流的直连域名清单（V0.4）。
+   *
+   * 🔴 这些字符串会被嵌入 PAC 脚本，属于**注入面**。
+   *    必须经 `validateSettings` 的白名单校验，且在生成脚本时用
+   *    `JSON.stringify` 序列化成数据而非拼接进代码（security.md §4.1 / ADR-33）。
+   */
+  directRules: readonly string[]
+  /**
    * 主策略组名称（V0.2）。空字符串表示用户还没选。
    *
    * 技术方案 §16 明令「禁止硬编码某个代理组名称」——不同机场的组名各不相同，
@@ -61,6 +79,16 @@ export interface Settings {
  * 优先级（由低到高）：系统设置 < 命令行参数 < 扩展 < Policy。
  * 扩展之间：最近安装的优先。
  */
+/**
+ * 分流模式（V0.4）。
+ *
+ * `global` 与 `direct` 用 `fixed_servers` / `clear()` 实现，
+ * `smart` 用 `pac_script` + `mandatory: true` 实现。
+ * 三者的失败语义必须一致地 fail-closed —— 而 PAC 默认是 fail-open，
+ * 这是本项目最需要小心的一处（security.md §4）。
+ */
+export type RoutingMode = 'global' | 'smart' | 'direct'
+
 export type LevelOfControl =
   | 'not_controllable'
   | 'controlled_by_other_extensions'
@@ -106,6 +134,10 @@ export type ErrorCode =
   | 'SELECT_FAILED'
   /** V0.2：还没选主策略组 —— 这不是错误，是「需要配置」 */
   | 'GROUP_NOT_CONFIGURED'
+  /** V0.3：单个节点测速失败或超时 */
+  | 'LATENCY_TEST_FAILED'
+  /** V0.6：订阅更新失败（订阅地址访问不通等） */
+  | 'SUBS_UPDATE_FAILED'
   | 'UNKNOWN'
 
 /**
@@ -162,6 +194,10 @@ export interface SettingsView {
   webRtcLockEnabled: boolean
   /** 语言偏好。UI 需要它来渲染下拉框的当前选中项。 */
   language: Language
+  /** 分流模式。Popup 的三档切换需要它。非敏感。 */
+  routingMode: RoutingMode
+  /** 直连清单。Settings 的文本框需要它回显。非敏感（是用户自己填的域名）。 */
+  directRules: readonly string[]
   /**
    * 主策略组名称。**不是敏感信息**，UI 需要它来渲染当前选中的组。
    *
@@ -288,6 +324,48 @@ export interface GroupView {
   type: string
   now: string | null
   nodes: readonly string[]
+  /**
+   * 各节点的最近延迟，毫秒（V0.3）。
+   *
+   * 来自 `/group` 响应里自带的 `history`，**不需要额外请求**（ADR-32）。
+   * 值为 `null` 表示内核没有该节点的历史记录（从未测过或最近一次失败）。
+   * 用 `null` 而不是 `0`：`0` 会被渲染成"0ms"，看起来像极快。
+   */
+  latency: Readonly<Record<string, number | null>>
+}
+
+/**
+ * 一个订阅（proxy provider）（V0.6）。
+ *
+ * 刻意**不含订阅 URL** —— 内核的 `/providers/proxies` 响应里本来也没有，
+ * 而这正是本项目乐于接受的限制：不经手就不会泄漏（ADR-34）。
+ */
+export interface ProviderView {
+  name: string
+  /** 该订阅提供的节点数。 */
+  nodeCount: number
+  /** 最近一次更新时间（ISO 字符串）；内核没给就是 null。 */
+  updatedAt: string | null
+  /**
+   * `vehicleType`：`HTTP` / `File` / `Compatible` / `Inline`（取自内核源码的枚举）。
+   *
+   * - `HTTP`       → 远端订阅，可更新
+   * - `Compatible` → 内核给配置里 `proxies:` 数组套的隐式 provider
+   * - `File`       → 从本机文件读
+   * - `Inline`     → 配置里内联的 payload
+   */
+  type: string
+  /**
+   * 能否从这里触发更新。只有 `HTTP` 类型可以 —— 其余没有远端可拉。
+   *
+   * 🔴 刻意保留不可更新的项**并标注**，而不是过滤掉。
+   *   过滤掉的话，用户（比如用 Clash Verge 的人，它会把订阅在外部拉好、
+   *   展平成 `proxies:` 再交给内核）会看到"没有任何订阅"——
+   *   而他明明有订阅。那句话**技术上正确但实际误导**，
+   *   读起来像"这功能坏了"。列出来并说明为什么不能更新，
+   *   才是如实告知。
+   */
+  updatable: boolean
 }
 
 /**

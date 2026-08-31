@@ -13,6 +13,7 @@
 
 import type {
   NormalizedError,
+  ProviderView,
   ProxyGroup,
   Settings,
   SettingsView,
@@ -60,6 +61,24 @@ export type Request =
    *    UI 必须对此有明示。
    */
   | { readonly type: 'SELECT_NODE'; readonly node: string }
+  /**
+   * V0.3：对主策略组测速。
+   *
+   * 刻意是显式消息而非 GET_STATUS 的一部分：一次全量测速会让内核同时向
+   * 几十个节点建连，绝不能绑在"打开 Popup"这个高频动作上（§17 / ADR-32）。
+   */
+  | { readonly type: 'TEST_LATENCY' }
+  /** V0.6：列出订阅。 */
+  | { readonly type: 'LIST_PROVIDERS' }
+  /** V0.6：更新指定订阅。这是 V0.6 唯一的写操作。 */
+  | { readonly type: 'UPDATE_PROVIDER'; readonly name: string }
+  /**
+   * 探测 Controller 端口。
+   *
+   * 「端口填错」是开发期间实测的头号失败原因，而它的症状完全不指向真实原因。
+   * 逐个试一个由已知客户端默认值构成的**白名单**（不是扫描范围）。
+   */
+  | { readonly type: 'PROBE_PORT' }
 
 /** 消息类型字面量，便于运行时穷举校验。 */
 export type RequestType = Request['type']
@@ -86,6 +105,13 @@ export interface ResponsePayloads {
   LIST_GROUPS: { groups: readonly ProxyGroup[] }
   /** 切换后返回新快照，UI 直接用它重绘，不必再发一次 GET_STATUS。 */
   SELECT_NODE: StatusSnapshot
+  /** 测速后返回新快照，其中 group.latency 已是最新值。 */
+  TEST_LATENCY: StatusSnapshot
+  LIST_PROVIDERS: { providers: readonly ProviderView[] }
+  /** 更新完返回刷新后的列表，UI 直接用它重绘（节点数可能变了）。 */
+  UPDATE_PROVIDER: { providers: readonly ProviderView[] }
+  /** 探到的端口；null 表示候选全部试过都没有。 */
+  PROBE_PORT: { port: number | null }
 }
 
 /** 给定请求类型，推导出其响应类型。 */

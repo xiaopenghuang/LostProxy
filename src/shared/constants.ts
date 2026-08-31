@@ -32,7 +32,83 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
    *    而后者远比前者常见，且用户无从判断是自己配错还是插件有 bug。
    */
   primaryGroup: '',
+  /*
+   * 默认 global —— 与 V0.1 的行为完全一致。
+   * 升级到 V0.4 不会改变任何既有用户的实际网络状态，
+   * 分流是用户主动选择才启用的东西，不该由一次升级替他决定。
+   */
+  routingMode: 'global',
+  directRules: Object.freeze([]),
 })
+
+/**
+ * PAC 直连规则的限制。
+ *
+ * 这两个数字不是随手定的，它们限制的是**会被嵌进 PAC 脚本的用户输入**：
+ *   - 单条长度：域名最长 253 字符（RFC 1035 全限定域名上限），留点余量
+ *   - 条数：PAC 脚本每次请求都要执行，几百条查表仍然很快，
+ *     但上限的意义在于挡住「粘贴了一整个 10 万行规则集」这类输入 ——
+ *     那会让每个请求都变慢，而症状是"整个浏览器变卡"，极难归因。
+ */
+export const RULE_MAX_LENGTH = 260
+export const RULE_MAX_COUNT = 500
+
+/**
+ * 规则允许的字符白名单（security.md §4.1 / ADR-33）。
+ *
+ * 🔴 刻意是**白名单**。黑名单漏一个字符就是一个 PAC 注入口，
+ *   而注入成功的后果是「一切都直连」—— 语法合法，mandatory 拦不住，
+ *   完全无声。
+ */
+export const RULE_ALLOWED_PATTERN = /^[A-Za-z0-9.*-]+$/
+
+/**
+ * 测速超时，毫秒。
+ *
+ * ⚠️ 上限 32767：内核侧是 `strconv.ParseInt(query.Get("timeout"), 10, 16)`，
+ *    **16 位**。传 60000 会得到 400 Bad Request，而不是"超时时间很长"（ADR-32）。
+ */
+export const LATENCY_TIMEOUT_MS = 5000
+
+/** 测速用的探测 URL。204 无响应体，是这类探活的惯例选择。 */
+export const LATENCY_TEST_URL = 'https://www.gstatic.com/generate_204'
+
+/**
+ * 延迟分档阈值，毫秒。
+ *
+ * 分档只用于给数值上色以加速扫视；数值本身始终显示 ——
+ * 色觉障碍用户看不出绿/黄/红，但能读数字（ADR 无编号，见 style.css 注释）。
+ */
+export const LATENCY_FAST_MS = 200
+export const LATENCY_MEDIUM_MS = 500
+
+/**
+ * Controller 端口探测的候选列表。
+ *
+ * 🔴 这是一个**白名单**，不是一个扫描范围。
+ *   逐个试已知客户端的公开默认值，与「枚举用户机器上的端口」是两件事：
+ *   我们不遍历区间，只验证下面这几个具体数字，且只连 127.0.0.1。
+ *
+ * 排序按命中概率：Clash Verge Rev 的默认值在最前，因为它是最常见的客户端，
+ * 而它恰好**不用**本项目的历史默认值 9090 —— 这个落差正是「端口填错」
+ * 成为头号失败原因的直接成因（test-plan §0.2）。
+ */
+export const CONTROLLER_PORT_CANDIDATES: readonly number[] = Object.freeze([
+  9097, // Clash Verge Rev 默认
+  9090, // mihomo / Clash 传统默认，也是本项目的默认值
+  9091, // 常见的手动改法
+  9099,
+  59090, // 部分 GUI 的随机高位端口习惯
+])
+
+/**
+ * 单次端口探测的超时，毫秒。
+ *
+ * 刻意远小于 CORE_PROBE_TIMEOUT_MS：候选有五六个，每个等 3 秒
+ * 会让用户以为界面卡死。而本机回环上「有服务在听」的判定是毫秒级的 ——
+ * 连不上时 TCP 会立刻拒绝，根本不会走到超时。
+ */
+export const PORT_PROBE_TIMEOUT_MS = 600
 
 /**
  * chrome.storage.local 的键名。

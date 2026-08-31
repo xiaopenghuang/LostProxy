@@ -13,7 +13,7 @@
  * ⚠️ 与 index.ts 同样受 ADR-08 约束：禁止在模块作用域持有可变状态。
  */
 
-import { ALERT_STALE_AFTER_MS } from '../shared/constants'
+import { ALERT_STALE_AFTER_MS, CONTROLLER_PORT_CANDIDATES } from '../shared/constants'
 import { errors, isSelfHealing } from '../shared/errors'
 import type { Request, Response, ResponsePayloads } from '../shared/messages'
 import type {
@@ -24,7 +24,17 @@ import type {
   Settings,
   StatusSnapshot,
 } from '../shared/types'
-import { getGroups, getVersion, selectNode, type ProbeResult } from './mihomo'
+import {
+  getGroups,
+  getLatencies,
+  getProviders,
+  getVersion,
+  probeControllerPort,
+  selectNode,
+  testGroupDelay,
+  updateProvider,
+  type ProbeResult,
+} from './mihomo'
 import { inspectWebRtcPolicy, syncWebRtcLock } from './privacy'
 import { disableProxy, enableProxy, inspectProxy, isBlockedByControl, type ProxyInspection } from './proxy'
 import {
@@ -136,6 +146,7 @@ export function pickError(
 function resolveGroup(
   settings: Settings,
   groups: readonly ProxyGroup[],
+  latency: Readonly<Record<string, number | null>>,
 ): readonly [GroupView | null, NormalizedError | null] {
   if (settings.primaryGroup.length === 0) return [null, errors.groupNotConfigured()]
 
@@ -144,7 +155,16 @@ function resolveGroup(
   const found = groups.find((g) => g.name === settings.primaryGroup)
   if (found === undefined) return [null, errors.groupNotFound(settings.primaryGroup)]
 
-  return [{ name: found.name, type: found.type, now: found.now, nodes: found.all }, null]
+  // 只保留该组成员的延迟，不把整个内核的 proxy 字典塞进快照。
+  const scoped: Record<string, number | null> = {}
+  for (const name of found.all) {
+    scoped[name] = latency[name] ?? null
+  }
+
+  return [
+    { name: found.name, type: found.type, now: found.now, nodes: found.all, latency: scoped },
+    null,
+  ]
 }
 
 /** 采集完整运行时快照。只读，无副作用。 */
@@ -152,14 +172,22 @@ export async function collectStatus(): Promise<StatusSnapshot> {
   const settings = await getSettings()
   const enabled = await getEnabledState()
 
-  // 五项探测互不依赖，并发跑省掉串行等待
-  // （探活最坏要等 3 秒超时，串起来会让 Popup 明显卡顿）。
-  const [inspection, probe, webRtc, persisted, groupsResult] = await Promise.all([
+  /*
+   * 六项探测互不依赖，并发跑省掉串行等待
+   * （探活最坏要等 3 秒超时，串起来会让 Popup 明显卡顿）。
+   *
+   * `getLatencies` 读的是内核 health-check 已有的 history，
+   * **不触发任何测速**（ADR-32）。它失败时返回空字典而非错误 ——
+   * 延迟是装饰性信息，取不到应该表现为"没有延迟显示"，
+   * 而不该让整个节点列表变成错误页。
+   */
+  const [inspection, probe, webRtc, persisted, groupsResult, latency] = await Promise.all([
     inspectProxy(settings),
     getVersion(settings),
     inspectWebRtcPolicy(),
     getLastError(),
     getGroups(settings),
+    getLatencies(settings),
   ])
 
   /*
@@ -168,7 +196,7 @@ export async function collectStatus(): Promise<StatusSnapshot> {
    * PROXY_LEAK_SUSPECTED —— 用不重要的信息盖掉最重要的信息。
    */
   const [group, groupError] = groupsResult.ok
-    ? resolveGroup(settings, groupsResult.groups)
+    ? resolveGroup(settings, groupsResult.groups, latency)
     : ([null, groupsResult.error] as const)
 
   return {
@@ -368,6 +396,78 @@ export async function handleSelectNode(node: string): Promise<Response<StatusSna
   return { ok: true, data: await collectStatus() }
 }
 
+/**
+ * V0.3：对主策略组测速。
+ *
+ * 只在用户显式点「测速」时才会走到这里（§17 / ADR-32）。测完不单独返回延迟，
+ * 而是返回完整快照 —— 内核在测速后更新了自己的 history，
+ * 重新采集一次能保证 UI 显示的与内核记录的一致，而不是两份可能分叉的数据。
+ */
+export async function handleTestLatency(): Promise<Response<StatusSnapshot>> {
+  const settings = await getSettings()
+
+  if (settings.primaryGroup.length === 0) {
+    return { ok: false, error: errors.groupNotConfigured() }
+  }
+
+  /*
+   * 刻意忽略测速返回值：内核已经把结果写进各节点的 history，
+   * 紧接着的 collectStatus 会读到。用返回值直接构造快照反而会引入
+   * 「测速结果」与「内核记录」两个可能不一致的来源。
+   */
+  await testGroupDelay(settings, settings.primaryGroup)
+
+  return { ok: true, data: await collectStatus() }
+}
+
+/** V0.6：列出订阅。 */
+export async function handleListProviders(): Promise<Response<ResponsePayloads['LIST_PROVIDERS']>> {
+  const settings = await getSettings()
+  const result = await getProviders(settings)
+
+  return result.ok
+    ? { ok: true, data: { providers: result.providers } }
+    : { ok: false, error: result.error }
+}
+
+/**
+ * V0.6：更新指定订阅，然后重新列出。
+ *
+ * 更新后重新拉列表而不是原样返回：订阅更新的**结果**就是节点数与更新时间变了，
+ * 不重新读的话 UI 显示的还是旧数字，用户无法确认更新是否真的生效。
+ */
+export async function handleUpdateProvider(
+  name: string,
+): Promise<Response<ResponsePayloads['UPDATE_PROVIDER']>> {
+  const settings = await getSettings()
+
+  const applied = await updateProvider(settings, name)
+  if (!applied.ok) {
+    // 与 SELECT_NODE 同理：这是一次操作的失败，不是代理层安全事件，
+    // 不写 lastError，免得盖住可能存在的泄漏告警。
+    return { ok: false, error: applied.error }
+  }
+
+  const result = await getProviders(settings)
+  return result.ok
+    ? { ok: true, data: { providers: result.providers } }
+    : { ok: false, error: result.error }
+}
+
+/**
+ * 探测 Controller 端口。
+ *
+ * 🔴 刻意**不自动保存**探到的端口，只把结果回给 UI 让用户确认。
+ *   自动写入意味着一次点击就改了用户的配置，而探测可能命中一个
+ *   他并不想用的内核实例（例如同时跑着两个客户端）。
+ *   端口是这个插件唯一必须填对的东西，替用户决定它不合适。
+ */
+export async function handleProbePort(): Promise<Response<ResponsePayloads['PROBE_PORT']>> {
+  const settings = await getSettings()
+  const port = await probeControllerPort(settings, CONTROLLER_PORT_CANDIDATES)
+  return { ok: true, data: { port } }
+}
+
 /** 单次探活，不改动任何设置。用于 Settings 页的 [Test Mihomo]。 */
 export async function handleTestCore(): Promise<Response<ResponsePayloads['TEST_CORE']>> {
   const settings = await getSettings()
@@ -404,6 +504,14 @@ export async function handleMessage(message: unknown): Promise<Response<unknown>
         return await handleListGroups()
       case 'SELECT_NODE':
         return await handleSelectNode(request.node)
+      case 'TEST_LATENCY':
+        return await handleTestLatency()
+      case 'LIST_PROVIDERS':
+        return await handleListProviders()
+      case 'UPDATE_PROVIDER':
+        return await handleUpdateProvider(request.name)
+      case 'PROBE_PORT':
+        return await handleProbePort()
       default: {
         // 穷举检查：新增消息类型时忘了处理，这里会编译失败。
         const exhaustive: never = request

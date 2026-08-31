@@ -1,66 +1,107 @@
-/* LostProxy Popup —— Fluent Design (Windows 11 / Edge 视觉语言)。
+/* LostProxy Popup —— Fluent Design 2 (Windows 11 / Edge 视觉语言)。
    布局对应技术方案 §13 的线框图。
 
-   设计取向：让插件看起来像 Edge 自带的功能，而不是一个贴上去的第三方面板。
-   具体手段是遵循 Fluent 的三件事——分层的表面（surface elevation）、
-   统一的圆角语言、以及用 accent 色而非饱和色块来传达状态。 */
+   设计取向：原生 Edge 级质感、精致的分层表面、细腻的动效反馈与高辨识度的状态表达。 */
 
 :root {
   color-scheme: light dark;
 
-  /* Fluent 2 brand */
+  /* Fluent 2 品牌色彩体系 */
   --accent: #0f6cbd;
   --accent-hover: #115ea3;
-  --accent-soft: rgba(15, 108, 189, 0.09);
+  --accent-active: #0c4d87;
+  --accent-soft: rgba(15, 108, 189, 0.08);
+  --accent-soft-hover: rgba(15, 108, 189, 0.14);
+  --accent-glow: rgba(15, 108, 189, 0.25);
 
-  /* 语义色 */
-  --ok: #0e700e;
+  /* 语义色彩体系 */
+  --ok: #0f7b0f;
+  --ok-soft: rgba(15, 123, 15, 0.1);
+  --ok-glow: rgba(15, 123, 15, 0.35);
+
   --danger: #c50f1f;
+  --danger-soft: rgba(197, 15, 31, 0.1);
+  --danger-glow: rgba(197, 15, 31, 0.3);
+
   --warn: #bc4b09;
+  --warn-soft: rgba(188, 75, 9, 0.1);
+  --warn-glow: rgba(188, 75, 9, 0.3);
 
-  /* 表面分层：page < card。Fluent 的层次靠亮度差 + 极轻边框，不靠重阴影 */
-  --page: #f3f3f3;
+  /* 表面分层 (Elevation Hierarchy) */
+  --page: #f8f9fa;
   --card: #ffffff;
-  --card-hover: #fafafa;
-  --stroke: rgba(0, 0, 0, 0.0578);
-  --stroke-strong: rgba(0, 0, 0, 0.1);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 0 1px rgba(0, 0, 0, 0.04);
+  --card-hover: #fcfcfc;
+  --control-bg: rgba(0, 0, 0, 0.03);
+  --control-bg-hover: rgba(0, 0, 0, 0.06);
 
-  /* 文本 */
-  --fg: #1b1b1b;
-  --fg-secondary: #616161;
-  --fg-tertiary: #8a8a8a;
+  /* 边框与光影 (Layer Shadows) */
+  --stroke: rgba(0, 0, 0, 0.06);
+  --stroke-subtle: rgba(0, 0, 0, 0.035);
+  --stroke-strong: rgba(0, 0, 0, 0.14);
+  
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04), 0 0 1px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.03), 0 1px 2px rgba(0, 0, 0, 0.04), 0 0 1px rgba(0, 0, 0, 0.04);
+  --shadow-elevated: 0 6px 16px rgba(0, 0, 0, 0.07), 0 2px 4px rgba(0, 0, 0, 0.04);
 
-  /* 控件 */
-  --switch-off: rgba(0, 0, 0, 0.35);
+  /* 文本系统 */
+  --fg: #1a1a1a;
+  --fg-secondary: #5a5a5a;
+  --fg-tertiary: #888888;
+
+  /* 控件与圆角体系 */
+  --switch-off: rgba(0, 0, 0, 0.38);
   --switch-off-fill: transparent;
 
-  --radius-card: 8px;
-  --radius-control: 5px;
+  --radius-card: 10px;
+  --radius-control: 6px;
+  --radius-pill: 999px;
+
+  /* 动效曲线 (Fluent Fast & Crisp Spring) */
+  --ease-fluent: cubic-bezier(0.1, 0.9, 0.2, 1);
+  --duration-quick: 140ms;
+  --duration-normal: 200ms;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --accent: #479ef5;
     --accent-hover: #62abf5;
-    --accent-soft: rgba(71, 158, 245, 0.14);
+    --accent-active: #2b88d8;
+    --accent-soft: rgba(71, 158, 245, 0.12);
+    --accent-soft-hover: rgba(71, 158, 245, 0.18);
+    --accent-glow: rgba(71, 158, 245, 0.3);
 
     --ok: #54b054;
+    --ok-soft: rgba(84, 176, 84, 0.14);
+    --ok-glow: rgba(84, 176, 84, 0.4);
+
     --danger: #ff99a4;
+    --danger-soft: rgba(255, 153, 164, 0.14);
+    --danger-glow: rgba(255, 153, 164, 0.35);
+
     --warn: #fbbc7f;
+    --warn-soft: rgba(251, 188, 127, 0.14);
+    --warn-glow: rgba(251, 188, 127, 0.35);
 
-    --page: #202020;
-    --card: #2b2b2b;
-    --card-hover: #323232;
-    --stroke: rgba(255, 255, 255, 0.0837);
-    --stroke-strong: rgba(255, 255, 255, 0.14);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+    --page: #1a1a1a;
+    --card: #242424;
+    --card-hover: #2b2b2b;
+    --control-bg: rgba(255, 255, 255, 0.04);
+    --control-bg-hover: rgba(255, 255, 255, 0.08);
 
-    --fg: #ffffff;
-    --fg-secondary: #cfcfcf;
-    --fg-tertiary: #9a9a9a;
+    --stroke: rgba(255, 255, 255, 0.08);
+    --stroke-subtle: rgba(255, 255, 255, 0.05);
+    --stroke-strong: rgba(255, 255, 255, 0.16);
+    
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.32), 0 0 1px rgba(255, 255, 255, 0.08);
+    --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.45);
 
-    --switch-off: rgba(255, 255, 255, 0.55);
+    --fg: #f5f5f5;
+    --fg-secondary: #c0c0c0;
+    --fg-tertiary: #929292;
+
+    --switch-off: rgba(255, 255, 255, 0.5);
   }
 }
 
@@ -72,26 +113,30 @@
   🔴 必需，不是保险起见。
   HTML 的 hidden 属性依赖浏览器默认样式表里的 `[hidden]{display:none}`，
   而那条规则的优先级低于任何作者样式。本文件里 .alert 声明了 display:flex，
-  于是 `element.hidden = true` 形同虚设 —— 告警框会永远显示，
-  没有错误时就是一个空的橙色框加一个孤零零的感叹号（真实踩过）。
-  用 !important 一次性覆盖所有用到 hidden 的元素。
+  必须用 !important 一次性覆盖所有用到 hidden 的元素。
 */
 [hidden] {
   display: none !important;
 }
 
+/*
+  380px 宽度标准（ADR-35）。
+*/
 body {
   margin: 0;
-  width: 312px;
-  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  width: 380px;
+  font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
   font-size: 13px;
+  line-height: 1.45;
   color: var(--fg);
   background: var(--page);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
 }
 
 .panel {
-  padding: 14px;
+  padding: 14px 16px 16px;
 }
 
 /* ---------- header ---------- */
@@ -100,17 +145,24 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 2px 12px;
+  padding: 2px 2px 14px;
 }
 
 .mark {
   display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-control);
+  background: var(--accent-soft);
   color: var(--accent);
+  transition: transform var(--duration-quick) var(--ease-fluent);
 }
 
 .mark svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
 }
 
 .brand {
@@ -118,34 +170,42 @@ body {
   margin: 0;
   font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .badge {
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
   font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.01em;
   color: var(--accent);
   background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
   white-space: nowrap;
 }
 
 /* ---------- 主状态卡片 ---------- */
 
 .card {
-  padding: 12px 13px;
+  padding: 13px 15px;
   border: 1px solid var(--stroke);
   border-radius: var(--radius-card);
   background: var(--card);
-  box-shadow: var(--shadow);
-  transition: border-color 160ms ease, background 160ms ease;
+  box-shadow: var(--shadow-card);
+  position: relative;
+  overflow: hidden;
+  transition: border-color var(--duration-normal) var(--ease-fluent),
+              background var(--duration-normal) var(--ease-fluent),
+              box-shadow var(--duration-normal) var(--ease-fluent);
 }
 
-/* ON 时用 accent 描边 + 极淡底色。Fluent 的做法是「暗示」而非「涂满」 */
+/* ON 状态：Fluent 微光呼吸与精致 Accent 描边 */
 .card[data-on="true"] {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--stroke));
-  background: linear-gradient(0deg, var(--accent-soft), var(--accent-soft)), var(--card);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--stroke));
+  background: linear-gradient(180deg, var(--accent-soft) 0%, transparent 100%), var(--card);
+  box-shadow: 0 4px 14px var(--accent-glow), var(--shadow-card);
 }
 
 .card-main {
@@ -158,13 +218,15 @@ body {
 .card-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
 }
 
 .card-label {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 650;
+  color: var(--fg);
+  letter-spacing: -0.005em;
 }
 
 .card-value {
@@ -172,6 +234,7 @@ body {
   color: var(--fg-secondary);
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
+  transition: opacity var(--duration-quick) ease;
 }
 
 /* ---------- Fluent 开关 ---------- */
@@ -179,19 +242,23 @@ body {
 .switch {
   position: relative;
   flex: none;
-  width: 40px;
-  height: 20px;
+  width: 44px;
+  height: 22px;
   padding: 0;
   border: 1px solid var(--switch-off);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--switch-off-fill);
   cursor: pointer;
-  transition: background 140ms ease, border-color 140ms ease;
+  outline: none;
+  transition: background var(--duration-quick) var(--ease-fluent),
+              border-color var(--duration-quick) var(--ease-fluent),
+              box-shadow var(--duration-quick) var(--ease-fluent);
 }
 
 .switch[aria-checked="true"] {
   border-color: var(--accent);
   background: var(--accent);
+  box-shadow: 0 2px 6px var(--accent-glow);
 }
 
 .switch:hover:not(:disabled) {
@@ -209,41 +276,40 @@ body {
 }
 
 .switch:focus-visible {
-  outline: 2px solid var(--fg);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
 .switch-knob {
   position: absolute;
   top: 50%;
-  left: 4px;
-  width: 12px;
-  height: 12px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: var(--fg);
   transform: translateY(-50%);
-  transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1), width 140ms ease, height 140ms ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform var(--duration-normal) var(--ease-fluent),
+              width var(--duration-quick) ease,
+              height var(--duration-quick) ease,
+              background var(--duration-quick) ease;
 }
 
 .switch[aria-checked="true"] .switch-knob {
-  background: #fff;
-  transform: translate(20px, -50%);
+  background: #ffffff;
+  transform: translate(22px, -50%);
 }
 
-/* 按下时旋钮微微拉伸 —— Windows 11 开关的标志性反馈 */
+/* 按下时旋钮微拉伸 */
 .switch:active:not(:disabled) .switch-knob {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
-/*
-  状态未知（首次拉取中）：旋钮停在中间并变淡。
-  刻意不让它停在"关"的位置 —— 如果代理其实是开着的，
-  那零点几秒里 UI 就在撒谎。本项目的原则是绝不显示假状态（§22 Case 3），
-  这条原则也适用于加载中的那一瞬间。
-*/
+/* 状态未知（首次拉取中） */
 .card[data-loading="true"] .switch-knob {
-  transform: translate(10px, -50%);
+  transform: translate(11px, -50%);
   opacity: 0.45;
 }
 
@@ -255,12 +321,25 @@ body {
 
 .alert {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   margin-top: 10px;
-  padding: 10px 11px;
-  border: 1px solid color-mix(in srgb, var(--warn) 34%, transparent);
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
   border-radius: var(--radius-card);
   background: color-mix(in srgb, var(--warn) 9%, var(--card));
+  box-shadow: var(--shadow-sm);
+  animation: alertFadeIn var(--duration-normal) var(--ease-fluent);
+}
+
+@keyframes alertFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .alert[data-severity="danger"] {
@@ -280,11 +359,12 @@ body {
 }
 
 .alert-icon svg {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
 }
 
 .alert-body {
+  flex: 1;
   min-width: 0;
 }
 
@@ -295,7 +375,7 @@ body {
 }
 
 .alert-dismiss {
-  margin-top: 7px;
+  margin-top: 6px;
   padding: 3px 10px;
   border: 1px solid var(--stroke-strong);
   border-radius: var(--radius-control);
@@ -305,51 +385,181 @@ body {
   color: var(--fg);
   background: var(--card);
   cursor: pointer;
+  transition: all var(--duration-quick) ease;
 }
 
 .alert-dismiss:hover {
   background: var(--card-hover);
   border-color: var(--fg-tertiary);
+  transform: translateY(-0.5px);
+}
+
+/* ---------- 标签页 (Pivot Tabs) ---------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 14px 0 0;
+  border-bottom: 1px solid var(--stroke);
+  padding: 0 2px;
+}
+
+.tab {
+  position: relative;
+  padding: 8px 14px 10px;
+  border: none;
+  background: none;
+  color: var(--fg-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  transition: color var(--duration-quick) ease, background var(--duration-quick) ease;
+}
+
+.tab:hover {
+  color: var(--fg);
+  background: var(--control-bg);
+}
+
+.tab[aria-selected='true'] {
+  color: var(--fg);
+  font-weight: 650;
+}
+
+.tab[aria-selected='true']::after {
+  position: absolute;
+  bottom: -1px;
+  left: 10px;
+  right: 10px;
+  height: 2.5px;
+  border-radius: 3px 3px 0 0;
+  background: var(--accent);
+  content: '';
+  box-shadow: 0 -1px 4px var(--accent-glow);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: var(--radius-control);
+}
+
+.pane {
+  min-height: 168px;
+  padding-top: 12px;
+}
+
+/* ---------- V0.4 分流模式 ---------- */
+
+.modes {
+  margin-bottom: 12px;
+}
+
+.modes-label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--fg-secondary);
+  font-size: 11.5px;
+  font-weight: 550;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.modes-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-control);
+  background: var(--control-bg);
+}
+
+.mode-btn {
+  padding: 6px 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--duration-quick) var(--ease-fluent);
+}
+
+.mode-btn:hover:not([aria-checked='true']) {
+  background: var(--card);
+  color: var(--fg);
+  box-shadow: var(--shadow-sm);
+}
+
+.mode-btn[aria-checked='true'] {
+  background: var(--card);
+  color: var(--accent);
+  font-weight: 650;
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--stroke));
+  box-shadow: var(--shadow-sm);
+}
+
+.mode-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.mode-btn:disabled {
+  color: var(--fg-tertiary);
+  cursor: default;
+}
+
+.modes-hint {
+  margin: 6px 0 0;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 /* ---------- Core 状态 ---------- */
 
 .core {
   margin-top: 12px;
-  padding: 0 3px;
+  padding: 2px 4px;
 }
 
 .core-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   font-size: 12px;
   color: var(--fg-secondary);
+  font-weight: 500;
 }
 
-/* dot 三态。unknown（灰）刻意与 offline（红）区分：
-   「读不到 Core 状态」不是故障，不该染成告警色（ADR-23） */
+/* dot 呼吸状态 */
 .dot {
   flex: none;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--fg-tertiary);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--fg-tertiary) 16%, transparent);
+  transition: all var(--duration-normal) var(--ease-fluent);
 }
 
 .dot[data-state="online"] {
   background: var(--ok);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent);
 }
 
 .dot[data-state="offline"] {
   background: var(--danger);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 20%, transparent);
 }
 
 .core-note {
-  margin: 7px 0 0 15px;
+  margin: 6px 0 0 17px;
   font-size: 11px;
   line-height: 1.5;
   color: var(--fg-tertiary);
@@ -360,12 +570,13 @@ body {
 .facts {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 6px 12px;
+  gap: 7px 12px;
   margin: 12px 0 0;
-  padding: 11px 13px;
+  padding: 11px 14px;
   border: 1px solid var(--stroke);
   border-radius: var(--radius-card);
   background: var(--card);
+  box-shadow: var(--shadow-sm);
   font-size: 12px;
 }
 
@@ -381,25 +592,14 @@ body {
 
 /* ---------- V0.2 节点列表 ---------- */
 
-.nodes {
-  margin: 12px 0 0;
-  padding: 11px 13px 9px;
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius-card);
-  background: var(--card);
-}
-
 .nodes-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
   font-size: 12px;
-}
-
-.nodes-label {
-  color: var(--fg-secondary);
+  min-height: 24px;
 }
 
 .nodes-group {
@@ -407,35 +607,93 @@ body {
   overflow: hidden;
   color: var(--fg-tertiary);
   font-size: 11px;
+  font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .nodes-hint {
-  margin: 0 0 4px;
+  margin: 0 0 6px;
   color: var(--fg-secondary);
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1.45;
 }
 
-/* Popup 只有 312px 宽、高度也有限，而一个策略组可能有上百个节点。
-   给列表封顶并允许滚动，避免 Popup 被撑成一条长溜。 */
 .node-list {
   display: flex;
   max-height: 176px;
   flex-direction: column;
   margin: 0;
-  padding: 0;
-  gap: 2px;
+  padding: 2px 1px;
+  gap: 3px;
   overflow-y: auto;
   list-style: none;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
+/* 滚动条美化 */
+.node-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.node-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.node-list::-webkit-scrollbar-thumb {
+  background: var(--stroke-strong);
+  border-radius: var(--radius-pill);
+}
+
+.node-list::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-tertiary);
+}
+
+/* 小尺寸操作按钮（测速、更新订阅） */
+.mini-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 550;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: all var(--duration-quick) ease;
+}
+
+.mini-btn:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: var(--fg-tertiary);
+  transform: translateY(-0.5px);
+}
+
+.mini-btn:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+.mini-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.mini-btn:disabled {
+  color: var(--fg-tertiary);
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* 节点行 */
 .node-item {
-  display: block;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  padding: 6px 8px;
+  padding: 7px 10px;
   border: 1px solid transparent;
   border-radius: var(--radius-control);
   background: transparent;
@@ -444,11 +702,15 @@ body {
   font-size: 12px;
   text-align: left;
   cursor: pointer;
-  transition: background 90ms ease;
+  transition: all var(--duration-quick) var(--ease-fluent);
 }
 
 .node-item:hover:not(:disabled) {
-  background: var(--card-hover);
+  background: var(--control-bg-hover);
+}
+
+.node-item:active:not(:disabled) {
+  transform: scale(0.99);
 }
 
 .node-item:focus-visible {
@@ -456,26 +718,27 @@ body {
   outline-offset: 1px;
 }
 
-/* 选中项用 accent 软底 + 左侧指示条。刻意不用纯色块填满：
-   Fluent 的选中态靠 accent 提示而非整块反色。 */
+/* 选中项高亮与左侧胶囊指示条 */
 .node-item[aria-current='true'] {
   position: relative;
-  padding-left: 14px;
+  padding-left: 16px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-weight: 600;
+  font-weight: 650;
+  border-color: color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 .node-item[aria-current='true']::before {
   position: absolute;
   top: 50%;
   left: 5px;
-  width: 3px;
-  height: 12px;
-  border-radius: 2px;
+  width: 3.5px;
+  height: 14px;
+  border-radius: 3px;
   background: var(--accent);
   content: '';
   transform: translateY(-50%);
+  box-shadow: 0 0 6px var(--accent-glow);
 }
 
 .node-item:disabled {
@@ -483,15 +746,47 @@ body {
   cursor: default;
 }
 
-/*
- * ADR-28 要求的边界披露。
- *
- * 刻意不做成"看起来像装饰的小灰字"：它上面有一条分隔线，且颜色用
- * --fg-secondary 而不是 --fg-tertiary。这段话解释的是本项目唯一一个
- * 效果逸出浏览器的操作，弱化它等于变相隐瞒。
- */
+.node-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* V0.3 延迟徽章 Pill */
+.latency {
+  padding: 1.5px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--fg-tertiary);
+  background: var(--control-bg);
+  transition: all var(--duration-quick) ease;
+}
+
+.latency[data-tier='fast'] {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+
+.latency[data-tier='medium'] {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.latency[data-tier='slow'] {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.latency[data-tier='timeout'] {
+  color: var(--fg-tertiary);
+  font-style: italic;
+}
+
+/* ADR-28 要求的边界披露 */
 .nodes-scope {
-  margin: 8px 0 0;
+  margin: 10px 0 0;
   padding-top: 8px;
   border-top: 1px solid var(--stroke);
   color: var(--fg-secondary);
@@ -506,8 +801,8 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 12px;
-  padding: 11px 3px 0;
+  margin-top: 14px;
+  padding: 12px 2px 0;
   border-top: 1px solid var(--stroke);
 }
 
@@ -520,7 +815,7 @@ body {
 
 .promises strong {
   color: var(--fg-secondary);
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .promises .sep {
@@ -533,30 +828,65 @@ body {
   align-items: center;
   gap: 5px;
   flex: none;
-  padding: 4px 9px;
+  padding: 5px 10px;
   border: 1px solid transparent;
   border-radius: var(--radius-control);
   font: inherit;
   font-size: 12px;
+  font-weight: 500;
   color: var(--fg-secondary);
   background: none;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition: all var(--duration-quick) var(--ease-fluent);
 }
 
 .ghost-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
   display: block;
+  transition: transform var(--duration-quick) var(--ease-fluent);
+}
+
+.ghost-btn:hover svg {
+  transform: rotate(30deg);
 }
 
 .ghost-btn:hover {
   color: var(--fg);
   background: var(--card);
   border-color: var(--stroke);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-0.5px);
 }
 
 .ghost-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/*
+  尊重系统的「减弱动态效果」设置。
+
+  为什么这一条值得单独写：唯一带入场动画的元素是**告警框**，
+  而告警里可能是「疑似已泄漏真实 IP」。对因前庭功能问题开启该设置的用户，
+  一个动着出现的安全警告不只是不适 —— 动画期间那句话是读不清的，
+  等于把最该立刻看到的信息推迟了。
+
+  把两个时长 token 归零即可覆盖全部 transition 与 animation，
+  不必逐条改（这也是当初把时长抽成变量的收益）。
+*/
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-quick: 0ms;
+    --duration-normal: 0ms;
+  }
+
+  /* 兜住没走 token 的那几处（例如 opacity 用了字面量 ease）。 */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

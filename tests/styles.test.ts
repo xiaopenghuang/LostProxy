@@ -79,3 +79,31 @@ describe('🔴 ADR-28 边界披露', () => {
     expect(css).toMatch(/\.nodes-scope\s*\{[^}]*color:\s*var\(--fg-secondary\)/)
   })
 })
+
+describe('尊重「减弱动态效果」', () => {
+  /*
+   * 这一条守的不是审美，是可读性。
+   *
+   * Popup 里唯一带入场动画的元素是告警框，而告警内容可能是
+   * 「疑似已泄漏真实 IP」。对开启了该系统设置的用户（常见成因是前庭功能问题），
+   * 一个动着出现的安全警告在动画期间是读不清的 ——
+   * 等于把最该立刻看到的信息推迟了。
+   */
+  it.each(STYLESHEETS)('%s honours prefers-reduced-motion', (sheet) => {
+    expect(read(sheet)).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/)
+  })
+
+  it('zeroes the duration tokens rather than patching each rule', () => {
+    // 时长抽成变量的收益就在这里：一处归零覆盖全部 transition 与 animation。
+    const css = read('src/popup/style.css')
+    const block = css.slice(css.indexOf('prefers-reduced-motion'))
+    expect(block).toMatch(/--duration-quick:\s*0m?s/)
+    expect(block).toMatch(/--duration-normal:\s*0m?s/)
+  })
+
+  it('the alert is the element that made this necessary', () => {
+    // 若将来有人移走告警的动画，这条注释与测试仍然成立（其他 transition 也该停），
+    // 但记录下当初的具体动因。
+    expect(read('src/popup/style.css')).toMatch(/\.alert[^{]*\{[^}]*animation:/)
+  })
+})
