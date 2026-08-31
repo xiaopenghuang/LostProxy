@@ -82,6 +82,13 @@ __CHANGES__
 - 不支持 SOCKS 端口，不支持需要用户名密码认证的上游代理
 - QUIC / HTTP3 是否绕过代理、InPrivate 窗口的实际出口 IP：**均未实测**
 - 企业 / 校园 Policy 控制代理设置时无法开启（扩展优先级低于 Policy，平台规则）
+- 「与其他代理扩展冲突时的提示」这一项**尚未真机验证** —— 需要人为装一个 SwitchyOmega
+  类扩展制造冲突才能验。逻辑侧已被单元测试锁定，且它是保守失败方向：判断错只会导致
+  「本该能开却拒绝开启」，不会造成「本该拒绝却显示假 ON」。
+  The "another proxy extension is in control" prompt is **not yet verified on a real machine**:
+  it needs a conflicting extension installed deliberately. The logic is pinned by unit tests and
+  fails conservatively — a wrong call can only refuse an enable that should have worked, never
+  show a false ON.
 
 完整说明见 [README](https://github.com/xiaopenghuang/LostProxy#readme) ·
 [English](https://github.com/xiaopenghuang/LostProxy/blob/main/README.en.md)

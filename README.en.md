@@ -266,8 +266,8 @@ The three traps that cost the most time during development, all hit for real:
 
 ## Roadmap
 
-- **V0.2 node switching** — code complete, **pending real-machine acceptance** (unreleased).
-  Switch the node of a Mihomo policy group straight from the popup, without opening Clash Verge.
+- **V0.2 node switching** ✅ shipped. Switch the node of a Mihomo policy group straight from the
+  popup, without opening Clash Verge.
 
   ⚠️ This is the project's **first feature whose effect leaves the browser**: switching a node
   changes the core's global state, so anything else using that core is affected too — unlike the

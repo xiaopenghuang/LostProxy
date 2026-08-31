@@ -8,9 +8,15 @@ Each version section below is extracted by `.github/workflows/release.yml` and b
 
 ---
 
-## Unreleased — V0.2 节点切换
+## v0.2.0
 
-⚠️ 尚未真机验收，**故意不打 tag**。验收清单见 `docs/test-plan.md` §5.5 / §5.6。
+在插件里直接切换 Mihomo 节点，不用打开 Clash Verge。
+Switch Mihomo nodes straight from the extension, without opening Clash Verge.
+
+真机验收通过（`docs/test-plan.md` §5.5）：切换生效，且 Clash Verge 里的选中项跟着变 ——
+后者同时确证了组名的 URL 编码正确，以及下面那条作用域披露属实。
+Verified on a real machine: the switch lands, and Clash Verge's selection follows — which also
+confirms group-name URL encoding works and that the scope disclosure below is factual.
 
 - 在 Popup 里直接查看和切换 Mihomo 策略组的节点，不用打开 Clash Verge。
   View and switch the nodes of a Mihomo policy group directly in the popup.
