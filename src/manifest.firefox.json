@@ -1,15 +1,18 @@
 {
   "manifest_version": 3,
   "name": "LostProxy",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Browser-scoped proxy. Routes only this browser through your local Mihomo core. Does not modify Windows system proxy, TUN or routes.",
   "browser_specific_settings": {
     "gecko": {
       "id": "lostproxy@nnxh.dev",
-      "strict_min_version": "128.0",
+      "strict_min_version": "140.0",
       "data_collection_permissions": {
         "required": ["none"]
       }
+    },
+    "gecko_android": {
+      "strict_min_version": "999.0"
     }
   },
   "permissions": [

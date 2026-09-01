@@ -7,7 +7,7 @@
 **Proxy this one browser. Leave the rest of the machine alone.**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/Edge%20%7C%20Chrome%20120+%20%7C%20Firefox%20128+-0078D6?logo=microsoftedge&logoColor=white)
+![Platform](https://img.shields.io/badge/Edge%20%7C%20Chrome%20120+%20%7C%20Firefox%20140+-0078D6?logo=microsoftedge&logoColor=white)
 ![Manifest](https://img.shields.io/badge/Manifest-V3-4285F4?logo=googlechrome&logoColor=white)
 [![Release](https://img.shields.io/github/v/release/xiaopenghuang/LostProxy?label=download&color=success)](https://github.com/xiaopenghuang/LostProxy/releases/latest)
 
@@ -193,9 +193,11 @@ and other non-obvious parts, are in [DESIGN.md](DESIGN.md#building).
   extensions rank below policy.
 - When another proxy extension holds the setting it **refuses to start** and says
   which one, rather than taking over.
-- **Firefox for Android installs but cannot work** — `proxy.settings` does not
-  exist there (Bugzilla 1725981). The next release will exclude it in the
-  manifest.
+- **Firefox for Android is not supported** and the manifest excludes it —
+  `proxy.settings` does not exist there (Bugzilla 1725981), so installing it
+  would give you a browser where the one thing it does throws. Failing to install
+  is more honest than installing and then failing
+  ([details](DESIGN.md#版本下限与-android-排除)).
 - Whether QUIC / HTTP3 bypasses the proxy, and the real egress IP of private
   windows, are **untested** — known open questions, not known guarantees.
 

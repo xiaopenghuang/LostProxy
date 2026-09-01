@@ -96,11 +96,11 @@ export function pagesConfig(platform: PlatformId): UserConfig {
       /*
        * 两个平台的编译目标不同，这不是凑数：
        *   - chrome120 与 manifest.json 的 minimum_chrome_version 对齐
-       *   - firefox128 与 manifest.firefox.json 的 strict_min_version 对齐
+       *   - firefox140 与 manifest.firefox.json 的 strict_min_version 对齐
        * 写错的后果是产物里出现目标浏览器不认的语法，而症状是
        * 「装上去白屏」——一个不会在开发机上出现的故障。
        */
-      target: platform === 'firefox' ? 'firefox128' : 'chrome120',
+      target: platform === 'firefox' ? 'firefox140' : 'chrome120',
       sourcemap: false,
       // 关掉 modulepreload polyfill：两个平台的目标版本都原生支持，
       // 对扩展只是凭空多出一个 chunk 文件。
@@ -153,7 +153,7 @@ export function swConfig(platform: PlatformId): UserConfig {
     build: {
       outDir: dist,
       emptyOutDir: false,
-      target: platform === 'firefox' ? 'firefox128' : 'chrome120',
+      target: platform === 'firefox' ? 'firefox140' : 'chrome120',
       sourcemap: false,
       rolldownOptions: {
         input: resolve(SRC, 'background/index.ts'),

@@ -7,7 +7,7 @@
 **只让这一个浏览器走代理，电脑上其他软件保持原样**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/Edge%20%7C%20Chrome%20120+%20%7C%20Firefox%20128+-0078D6?logo=microsoftedge&logoColor=white)
+![Platform](https://img.shields.io/badge/Edge%20%7C%20Chrome%20120+%20%7C%20Firefox%20140+-0078D6?logo=microsoftedge&logoColor=white)
 ![Manifest](https://img.shields.io/badge/Manifest-V3-4285F4?logo=googlechrome&logoColor=white)
 [![Release](https://img.shields.io/github/v/release/xiaopenghuang/LostProxy?label=download&color=success)](https://github.com/xiaopenghuang/LostProxy/releases/latest)
 
@@ -173,8 +173,9 @@ npm run build      # 产出 dist/（Edge / Chrome）与 dist-firefox/
 - 上游代理需要用户名密码认证的情形未实现。
 - 企业 / 校园 Policy 控制代理设置时无法开启 —— 扩展优先级低于 Policy。
 - 与其他代理扩展冲突时**拒绝开启**并说明是谁在控制，不强行覆盖。
-- **Firefox for Android 装得上但用不了** —— `proxy.settings` 在那上面
-  根本没实现（Bugzilla 1725981）。下个版本会在 manifest 里明确排除。
+- **不支持 Firefox for Android**，manifest 里明确排除了 —— `proxy.settings`
+  在那上面根本没实现（Bugzilla 1725981），装上去唯一的功能就是报错。
+  让它装不上比让它装上后必然失败要诚实（[细节](DESIGN.md#版本下限与-android-排除)）。
 - QUIC / HTTP3 是否绕过代理、InPrivate 窗口的实际出口 IP，**均未实测** ——
   是已知的待验项，不是已知的保证。
 

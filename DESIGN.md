@@ -159,6 +159,58 @@ Mihomo Controller 探不通只显示灰点，**不报警**。
 
 ---
 
+## 版本下限与 Android 排除
+
+`manifest.firefox.json` 里两个值需要解释，而 JSON 写不了注释：
+
+```json
+"gecko":         { "strict_min_version": "140.0" }
+"gecko_android": { "strict_min_version": "999.0" }
+```
+
+### 为什么桌面是 140
+
+`data_collection_permissions` 是**必需的** —— Mozilla 自 2025-11-03 起要求所有
+新提交的扩展声明它 —— 而它只在 **Firefox 140+**（Android 142+）才被支持。
+下限低于 140 时 addons-linter 会各报一条警告。
+
+原先定的是 128，因为那是 MDN 说的"仍能收到更新的最低版本"（根证书 2025-03 过期，
+更早的 Firefox 认不出扩展签名）。当时判断是"抬到 140 会丢掉 128–139 一批用户"。
+
+**那个判断在 2026-08 已经不成立**：ESR 128 于 **2025-09-16 停止支持**，
+当前 ESR 是 140，正式版在 153 以上。128–139 之间**没有任何还在支持的版本** ——
+留在那个区间的只有关掉了自动更新的人。代价从"丢一批用户"变成了几乎零，
+而收益是内置的数据同意界面真的生效、而不是被静默忽略。
+
+### 为什么 Android 是 999
+
+**这是个哨兵值，用来排除 Android，不是真的目标版本。**
+
+`proxy.settings` 在 Firefox for Android 上**根本没实现**
+（Bugzilla 1725981 至今开着，实报 `proxy.settings is not supported on android.`），
+而本扩展的 `applyProxy` / `releaseProxy` / `readProxyState` 全走它。
+
+不写 `gecko_android` 的话，Android **继承桌面的下限**（MDN 明说"If not provided,
+defaults to the version determined by `gecko.strict_min_version`"），
+于是 AMO 把它标成 Android 兼容 —— 用户装上得到一个开关点不动的扩展。
+
+**让一个平台装不上，比让它装上后必然失败要诚实。**
+
+999 是 manifest schema 允许的最大主版本号（模式是 `^[0-9]{1,3}(\.[a-z0-9]+)+$`，
+所以 `9999` 会被拒）。按现在每年约 11 个版本的节奏，Firefox 要 77 年才到那儿。
+
+⚠️ 理论上能靠 `proxy.onRequest`（Android **支持**它）单独实现 Android 路径，
+但那要把全局代理也改成逐请求判断，且 `<all_urls>` 要从可选变成**必需**权限
+—— 与上面那节的取舍方向相反。真要做是一个独立特性，不是一处修补。
+
+### 构建目标跟着一起改
+
+`vite.shared.ts` 里的 `target` 与这个下限对齐（`firefox140`）。
+写错的后果是产物里出现目标浏览器不认的语法，而症状是"装上去白屏" ——
+一个不会在开发机上出现的故障。
+
+---
+
 <a id="building"></a>
 
 ## 构建

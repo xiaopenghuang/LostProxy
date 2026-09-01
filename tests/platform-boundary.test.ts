@@ -389,6 +389,55 @@ describe('🔴🔴 构建产物里不得混入另一个平台的代码', () => {
     // Firefox 的 MV3 签名要求扩展 ID，缺了就无法上传 AMO 也无法自分发。
     expect(firefoxManifest.browser_specific_settings?.gecko?.id).toBeTruthy()
   })
+
+  it('🔴 构建目标必须与 manifest 的版本下限对齐', () => {
+    /*
+     * 这两个数字必须一起改，而它们在两个不同的文件里 ——
+     * 正是会漂移的形状。此方把下限从 128 抬到 140 时就得手动改两处。
+     *
+     * 漂移的后果是**产物里出现目标浏览器不认的语法**，
+     * 而症状是"装上去白屏" —— 一个不会在开发机上出现的故障，
+     * 因为开发机上的 Firefox 总是最新的。
+     */
+    const manifest = JSON.parse(read(resolve(ROOT, 'src', 'manifest.firefox.json')))
+    const floor = manifest.browser_specific_settings.gecko.strict_min_version
+    const major = floor.split('.')[0]
+
+    expect(read(resolve(ROOT, 'vite.shared.ts'))).toContain(`'firefox${major}'`)
+  })
+
+  it('🔴🔴 Android 必须被明确排除', () => {
+    /*
+     * `proxy.settings` 在 Firefox for Android 上根本没实现
+     * （Bugzilla 1725981），而本扩展所有的代理写入都走它。
+     *
+     * 不声明 `gecko_android` 的话 Android **继承桌面的下限**，
+     * 于是 AMO 把它标成兼容 —— 用户装上得到一个开关点不动的扩展。
+     * 这个状态在 v0.4.0 上真的发布出去过。
+     *
+     * 判据是"下限高得不可能满足"，而不是某个具体数字 ——
+     * 将来若真做了 Android 支持，改的应该是这条测试所表达的意图，
+     * 而不是悄悄把哨兵值调低。
+     */
+    const manifest = JSON.parse(read(resolve(ROOT, 'src', 'manifest.firefox.json')))
+    const android = manifest.browser_specific_settings?.gecko_android
+
+    expect(android, 'gecko_android 缺失 —— Android 会继承桌面下限并被标成兼容').toBeDefined()
+    expect(Number.parseInt(android.strict_min_version, 10)).toBeGreaterThan(500)
+  })
+
+  it('data_collection_permissions 存在，且下限支持它', () => {
+    /*
+     * 那个键是**必需的**（Mozilla 自 2025-11-03 起要求新提交的扩展声明它），
+     * 而它只在 Firefox 140+ 被支持。下限低于 140 时 addons-linter 会报警告，
+     * 且那个键在旧版本上被静默忽略。
+     */
+    const manifest = JSON.parse(read(resolve(ROOT, 'src', 'manifest.firefox.json')))
+    const gecko = manifest.browser_specific_settings.gecko
+
+    expect(gecko.data_collection_permissions?.required).toEqual(['none'])
+    expect(Number.parseFloat(gecko.strict_min_version)).toBeGreaterThanOrEqual(140)
+  })
 })
 
 describe('platform 契约的运行期完整性', () => {

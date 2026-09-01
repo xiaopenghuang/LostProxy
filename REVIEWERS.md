@@ -76,9 +76,19 @@ touching the operating system's proxy settings.
 
 Points that may be relevant to your review:
 
-- **`strict_min_version` is `128.0`**, well above the `91.1` floor that
+- **`strict_min_version` is `140.0`**, well above the `91.1` floor that
   [Securing the proxy API](https://blog.mozilla.org/security/2021/10/25/securing-the-proxy-api-for-firefox-add-ons/)
-  asks for. Firefox's own proxy-failover behaviour therefore applies.
+  asks for. Firefox's own proxy-failover behaviour therefore applies. 140 is also
+  the first version supporting `data_collection_permissions`, so the built-in
+  consent experience works rather than being silently ignored.
+- **`gecko_android.strict_min_version` is `999.0`, which excludes Android on
+  purpose.** `proxy.settings` is not implemented on Firefox for Android
+  ([Bugzilla 1725981](https://bugzilla.mozilla.org/show_bug.cgi?id=1725981),
+  still open), and every proxy write in this extension goes through it. Without
+  that key Android inherits the desktop floor and the add-on installs into a
+  browser where its only function throws. 999 is the highest major the manifest
+  schema accepts (`^[0-9]{1,3}(\.[a-z0-9]+)+$`); it is a sentinel, not a real
+  target.
 - **The proxy target is the user's own machine.** The default and only
   install-time host permission is `http://127.0.0.1/*`. The add-on never
   contacts a remote server of ours; there is no telemetry and no analytics
