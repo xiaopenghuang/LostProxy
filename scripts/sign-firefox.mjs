@@ -61,6 +61,7 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { findStrayRootEntries } from './repo-manifest.mjs'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const OUT_DIR = resolve(ROOT, 'release')
@@ -185,6 +186,27 @@ function buildSourceArchive() {
 
   if (!existsSync(resolve(ROOT, 'REVIEWERS.md'))) {
     fail('缺 REVIEWERS.md —— 那是给审核员的构建说明，没有它这次提交会被退回补材料')
+  }
+
+  /*
+   * 🔴 根目录白名单 —— 在生成压缩包**之前**查。
+   *
+   * v0.4.2 的源码包里带了一张误提交的截图（根目录的 `image.png`）。
+   * 没有任何环节报错：构建正常、测试全绿、下载到的 zip 干净 ——
+   * 因为 `package.mjs` 只从 `dist/` 取文件，而源码包取的是全部已跟踪文件。
+   *
+   * 截图这种东西可能带着窗口标题、文件路径、节点名甚至订阅链接，
+   * 而它的收件人是外部审核员。这道检查在此，而不是只在 CI 的
+   * `repo-hygiene.test.ts` 里，是因为**签名是真正会把东西寄出去的那一步** ——
+   * 拦在这里意味着即便有人跳过了测试也漏不出去。
+   */
+  const stray = findStrayRootEntries(ROOT)
+  if (stray.length > 0) {
+    fail(
+      '仓库根目录有不在白名单上的条目，它们会随源码包一起寄给 AMO 审核员：\n' +
+        stray.map((n) => `    ${n}`).join('\n') +
+        '\n\n  该删就 git rm，是正经的项目文件就加进 scripts/repo-manifest.mjs。',
+    )
   }
 
   execFileSync('git', ['archive', '--format=zip', '-o', outPath, 'HEAD'], { cwd: ROOT })
