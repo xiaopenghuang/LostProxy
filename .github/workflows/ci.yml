@@ -132,8 +132,16 @@ jobs:
           #    AMO 的 secret 又只显示一次，只能撤销重发。
           #
           #    所以这项检查该由机器用安全的名字做，而不是靠人每次记得小心。
+          #    ⚠️ canary 值必须**运行时随机生成**，不能是写在这里的字面量。
+          #       此方第一版写死成一个固定字符串，结果这一步把自己抓了 ——
+          #       那个字面量就在本文件里，而 `ci.yml` 是被跟踪文件、
+          #       本身就在源码包中，于是 grep 命中的是 workflow 自己的内容。
+          #
+          #       本地当时是绿的，因为 ci.yml 还没提交，而 `git archive HEAD`
+          #       只取已提交内容 —— 一 push 就红。随机值不可能出现在任何文件里。
           PROBE=".env.citest"
-          echo "AMO_API_SECRET=canary-must-not-ship" > "$PROBE"
+          CANARY="leak-canary-$(date +%s%N)-$RANDOM"
+          echo "AMO_API_SECRET=$CANARY" > "$PROBE"
           git check-ignore -q "$PROBE" || {
             echo "::error::$PROBE 竟然没被 gitignore 忽略 —— 那条规则可能被改坏了"
             rm -f "$PROBE"; exit 1
@@ -142,7 +150,7 @@ jobs:
           # 与 scripts/sign-firefox.mjs 用同一条命令产生源码包。
           git archive --format=zip -o "source-check.zip" HEAD
 
-          if unzip -p source-check.zip | grep -q "canary-must-not-ship"; then
+          if unzip -p source-check.zip | grep -qF "$CANARY"; then
             echo "::error::源码包里带上了被 gitignore 的内容 —— 它会被寄给 Mozilla"
             rm -f "$PROBE"; exit 1
           fi
