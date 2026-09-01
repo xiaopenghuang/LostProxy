@@ -17,129 +17,131 @@
 
 ---
 
-校园网里常见的两难：挂上代理才能查文献，但一开系统代理，校内的图书馆系统、
-实验室数据库、内网打印机全部跟着绕道走。TUN 模式更彻底，连别的软件一起接管。
+## 概述
 
-LostProxy 把代理的作用域收窄到**一个浏览器**：
+开启系统代理会让全部流量绕道，包括本该直连的内网资源：图书馆系统、实验室
+数据库、内网打印机。TUN 模式的影响范围更大，连其他应用一并接管。
+
+LostProxy 把代理的作用域限定在**单个浏览器**：
 
 ```text
 装了它的 Edge  ──▶ 本机 Mihomo ──▶ 节点 ──▶ 站外资源
 没装的 Chrome  ──▶ 直连 ─────────────────▶ 校内系统 / 数据库
 ```
 
-不改 Windows 系统代理，不写注册表，不开 TUN，不改路由表，不要管理员权限。
-协议（VLESS / VMess / Trojan / SS / Hysteria2）一个都不实现 —— 那些交给 Mihomo，
-本扩展只管"谁走代理"。
+不修改 Windows 系统代理，不写注册表，不启用 TUN，不改动路由表，不需要
+管理员权限。扩展本身不实现任何代理协议（VLESS / VMess / Trojan / SS /
+Hysteria2），协议由 Mihomo 负责，扩展只决定哪些流量走代理。
 
-## 能做什么
+## 功能
 
-- **一键开关**，作用域只限本浏览器
-- **切节点 / 测延迟**，不用打开 Clash 客户端
-- **智能分流** —— 列一份直连清单，校内站点不走代理
-- **刷新订阅**
-- **WebRTC 一并锁进代理**，否则 UDP 会绕过 HTTP 代理暴露真实 IP
-- 代理连不上时**宁可断网也不偷偷直连**（[为什么](DESIGN.md#fail-closed)）
+- 代理开关，作用域限定当前浏览器
+- 节点切换与延迟测试，无需打开 Clash 客户端
+- 规则分流，可配置直连主机清单
+- 订阅刷新
+- 同步锁定 WebRTC，避免 UDP 绕过 HTTP 代理暴露真实 IP
+- 代理不可用时中断连接，不回退直连（[设计依据](DESIGN.md#fail-closed)）
 - 中英双语，即时切换
 
 ## 安装
 
-[Releases](https://github.com/xiaopenghuang/LostProxy/releases/latest) 里按浏览器选，
-**两个包不能混用** —— 装错的表现是"装上了但代理没生效"，而浏览器不报错。
+在 [Releases](https://github.com/xiaopenghuang/LostProxy/releases/latest)
+页面按浏览器选择。**两个安装包不可混用**：装错的表现是代理不生效，且浏览器
+不会报错。
 
 ### Edge / Chrome
 
-下载 `lostproxy-v<版本>.zip` 并**解压**，然后：
+下载 `lostproxy-v<版本>.zip` 并解压，然后：
 
-1. 打开 `edge://extensions`（Chrome 是 `chrome://extensions`）
-2. 打开左下角**开发人员模式**
-3. 点**加载解压缩的扩展**，选解压出来的**文件夹**
+1. 打开 `edge://extensions`（Chrome 为 `chrome://extensions`）
+2. 启用左下角的**开发人员模式**
+3. 点击**加载解压缩的扩展**，选择解压出的**文件夹**
 
-> 商店之外只有这一条路：Chromium 会拒绝从 URL 下载的 `.crx`
-> （`CRX_REQUIRED_PROOF_MISSING`）。上架商店是后面的事。
+> 商店之外只有这一种方式。Chromium 会拒绝从 URL 下载的 `.crx`
+> （`CRX_REQUIRED_PROOF_MISSING`）。商店上架为后续计划。
 
 ### Firefox
 
-下载 **`lostproxy-firefox-v<版本>.xpi`**（Mozilla 签过名的那个），然后：
+下载 **`lostproxy-firefox-v<版本>.xpi`**（Mozilla 已签名），然后：
 
-1. `about:addons` → 右上齿轮 → **从文件安装附加组件**
-2. 🔴 点开 LostProxy → 打开**在隐私窗口中运行**
+1. 打开 `about:addons` → 右上齿轮 → **从文件安装附加组件**
+2. 点开 LostProxy → 启用**在隐私窗口中运行**
 
-第 2 步不是可选的。Firefox 规定代理设置对隐私窗口与普通窗口同时生效，
-不给这个权限就**完全不允许**扩展改代理。没开的话扩展会告诉你去哪儿开，
-不会假装已经开好了。
+**第 2 步为必需项。** Firefox 规定代理设置对隐私窗口与普通窗口同时生效，
+未获得该权限时完全不允许扩展修改代理。权限缺失时扩展会提示启用位置，
+不会静默失败。
 
-> **`.zip` 那个也能用，但只能临时载入**（`about:debugging` → 临时载入附加组件），
-> 关掉 Firefox 就没了。`.xpi` 是签过名的，重启不掉。
+> **`.zip` 同样可用，但只能临时载入**（`about:debugging` → 临时载入附加
+> 组件），关闭 Firefox 后失效。`.xpi` 已签名，重启后保留。
 >
-> ⚠️ `.xpi` **不会自动更新** —— 它走自分发渠道，AMO 上搜不到，
-> 所以 Firefox 找不到更新源。想升级得回来手动下。
+> `.xpi` **不会自动更新**。它通过自分发渠道发布，AMO 上不可检索，
+> Firefox 无更新源可查询。升级需手动下载。
 
-### 校验（可选）
+### 完整性校验
 
-代理工具值得核对哈希，Release 页面附了 SHA-256。`.zip` 由 GitHub Actions 构建
-并带 Sigstore 来源证明：
+每个 Release 附带 SHA-256。`.zip` 由 GitHub Actions 构建并带 Sigstore
+来源证明：
 
 ```bash
 gh attestation verify lostproxy-v<版本>.zip --repo xiaopenghuang/LostProxy
 ```
 
-`.xpi` 由 Mozilla 签名、但在本机构建，所以没有那份来源证明。
-它的内容与 `.zip` 逐个文件一致（只差 AMO 重新格式化过的 `manifest.json`），
-想核对可以两个都下来解开比一比。
+`.xpi` 由 Mozilla 签名但在本机构建，因此没有来源证明。它与 `.zip` 的内容
+逐个文件一致，仅 `manifest.json` 因 AMO 重新格式化而不同，可下载两者解压对比。
 
 ## 配置
 
-**装上它本身不会让你能上网** —— 需要本机已经跑着一个 Mihomo 内核，
-比如 [Clash Verge Rev](https://github.com/clash-verge-rev/clash-verge-rev)。
+**扩展本身不提供代理能力**，需要本机已运行 Mihomo 内核，例如
+[Clash Verge Rev](https://github.com/clash-verge-rev/clash-verge-rev)。
 
-### 端口 —— 唯一最容易踩的坑
+### 端口
 
 | | 代理端口 | Controller 端口 |
 | --- | --- | --- |
 | LostProxy 默认值 | 7890 | 9090 |
-| **Clash Verge Rev 默认** | **7897** | **9097** |
-| 你改过代理端口 | 你设的值 | **仍是 9097**（不跟着变） |
+| **Clash Verge Rev 默认值** | **7897** | **9097** |
+| 修改过代理端口后 | 自定义值 | **仍为 9097**（不跟随变化） |
 
-去 Clash Verge 核对两处，填进 LostProxy 的 ⚙ 设置：
+在 Clash Verge 中核对两处，填入 LostProxy 的 ⚙ 设置页：
 
-- `设置 → 端口设置` → **混合代理端口** → 填「代理端口」
-- `设置 → 外部控制` → **端口** → 填「Controller 端口」；有密钥就一并填上
+- `设置 → 端口设置` → **混合代理端口** → 对应「代理端口」
+- `设置 → 外部控制` → **端口** → 对应「Controller 端口」，如设有密钥一并填入
 
-三条提醒：
+三点说明：
 
-1. **两个端口互相独立。** 把混合端口改成 2080，Controller 通常还在 9097。
-2. **代理端口要填混合端口或 HTTP 端口**，不能填 SOCKS 端口。
-3. **不开外部控制也能用。** 只是核心状态显示灰点，代理本身照常工作 ——
-   设置页有个「探测端口」按钮可以帮你找。
+1. **两个端口相互独立。** 混合端口改为 2080 后，Controller 通常仍在 9097。
+2. **代理端口须填混合端口或 HTTP 端口**，不可填 SOCKS 端口。
+3. **外部控制非必需。** 未启用时内核状态显示为灰点，代理功能不受影响。
+   设置页提供「探测端口」按钮辅助定位。
 
-### 然后在客户端里关掉这两项
+### 客户端设置
 
 ```text
-系统代理  = 关    ← 开着就失去「只有这个浏览器走代理」的意义
-TUN      = 关    ← 开着会接管全系统流量
+系统代理  = 关闭    ← 启用后失去单浏览器作用域的意义
+TUN      = 关闭    ← 启用后接管全系统流量
 ```
 
-这两项正是本扩展要替代的东西，开着它就没有存在价值了。
+这两项正是本扩展的替代目标，任一启用时扩展无实际作用。
 
-⚠️ 某些客户端退出或改配置时会把系统代理**自动开回来**，验证前再查一遍：
+部分客户端在退出或重载配置时会**自动恢复系统代理**，验证前建议复查：
 
 ```bash
 reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyEnable
 ```
 
-必须是 `0x0`。
+结果应为 `0x0`。
 
-## 验证它真的生效了
+## 验证
 
-装 LostProxy 的浏览器和**没装的另一个浏览器**，同时打开
+在安装了 LostProxy 的浏览器与**未安装的另一个浏览器**中同时打开
 <https://ipinfo.io/ip>：
 
 ```text
-LostProxy 关 → 两个 IP 相同
-LostProxy 开 → 两个 IP 不同   ← 这才说明作用域隔离成立
+LostProxy 关闭 → 两个 IP 相同
+LostProxy 启用 → 两个 IP 不同   ← 作用域隔离成立
 ```
 
-别拿固定 IP 对号，机场节点会变，只看两个数字是否不同。
+不要与固定 IP 比对，机场节点会变化，只需确认两个结果是否不同。
 
 ## 从源码构建
 
@@ -148,57 +150,57 @@ npm install
 npm run build      # 产出 dist/（Edge / Chrome）与 dist-firefox/
 ```
 
-然后按上面的安装步骤，选 `dist/` 或 `dist-firefox/`（不是项目根目录）。
-改了代码重新构建，再到扩展页点**刷新**。
+随后按上文安装步骤，选择 `dist/` 或 `dist-firefox/`（不是项目根目录）。
+修改代码后重新构建，并在扩展管理页点击**刷新**。
 
-| 命令 | 作用 |
+| 命令 | 说明 |
 | --- | --- |
-| `npm run build` | 两个平台完整构建 |
+| `npm run build` | 两个平台的完整构建 |
 | `npm run watch` | 监听重建界面 |
-| `npm run watch:sw` | 监听重建背景脚本（**另开一个终端**） |
+| `npm run watch:sw` | 监听重建背景脚本（需另开终端） |
 | `npm run test` | 单元测试 |
 | `npm run verify` | typecheck + test + build |
-| `npm run package` | 打出两个可分发 zip 到 `release/` |
+| `npm run package` | 打出两个可分发 zip 至 `release/` |
 | `npm run sign:firefox` | 提交 AMO 签名，取回可长期安装的 `.xpi` |
 
-技术栈：TypeScript + Vite 8（Rolldown）+ Vitest，原生 HTML/CSS 无 UI 框架，
-零运行时依赖。每个平台要跑两趟构建、以及别的一些非显然之处，见
+技术栈为 TypeScript + Vite 8（Rolldown）+ Vitest，界面使用原生 HTML/CSS，
+无 UI 框架，无运行时依赖。每个平台需两趟构建的原因及其他非显然之处见
 [DESIGN.md](DESIGN.md#构建)。
 
 ## 已知限制
 
-- 浏览器自身的账号同步、搜索建议、Copilot 也会走代理。这是浏览器级代理的
+- 浏览器自身的账号同步、搜索建议、Copilot 同样走代理。这是浏览器级代理的
   预期行为，但可能触发账号风控。
-- 只支持 HTTP / 混合端口，不支持直连 SOCKS 端口。
-- 上游代理需要用户名密码认证的情形未实现。
-- 企业 / 校园 Policy 控制代理设置时无法开启 —— 扩展优先级低于 Policy。
-- 与其他代理扩展冲突时**拒绝开启**并说明是谁在控制，不强行覆盖。
-- **不支持 Firefox for Android** —— `proxy.settings` 在那上面根本没实现
-  （Bugzilla 1725981），本扩展所有的代理写入都走它。AMO 上没有把它标成
-  Android 兼容，但**没有任何 manifest 键能阻止在 Android 上安装** ——
-  真装了的话开关会报「proxy.settings is not supported on android」
-  （[细节](DESIGN.md#版本下限与-android)）。
-- QUIC / HTTP3 是否绕过代理、InPrivate 窗口的实际出口 IP，**均未实测** ——
-  是已知的待验项，不是已知的保证。
+- 仅支持 HTTP 与混合端口，不支持直接使用 SOCKS 端口。
+- 未实现上游代理的用户名密码认证。
+- 企业或校园 Policy 控制代理设置时无法启用，扩展优先级低于 Policy。
+- 与其他代理扩展冲突时拒绝启用并提示占用方，不强制覆盖。
+- **不支持 Firefox for Android。** `proxy.settings` 在该平台未实现
+  （Bugzilla 1725981），而扩展的所有代理写入均依赖它。AMO 未将其标记为
+  Android 兼容，但**没有任何 manifest 键能阻止在 Android 上安装**，
+  强行安装后开关会报 `proxy.settings is not supported on android`
+  （[详细说明](DESIGN.md#版本下限与-android)）。
+- QUIC / HTTP3 是否绕过代理、隐私窗口的实际出口 IP，**均未实测**，
+  属于待验项而非已验证保证。
 
-### Firefox 与 Edge / Chrome 的差异
+### 平台差异
 
-功能**完全一致**。但有两处操作上的不同，都源自浏览器 API 本身：
+功能完全一致。两处操作差异均源自浏览器 API 本身：
 
-1. **必须授予「在隐私窗口中运行」**（见上面安装第 2 步）。
-2. **智能分流要额外授权一次。** Firefox 不支持内联 PAC，分流只能由扩展
-   逐个请求判断 —— 也就是浏览器会把每个网址问一遍，这需要「访问所有网站」权限。
-   入口在**设置页 → 直连规则 → 「允许逐请求判断」**。不给就继续用全局代理，
-   给了随时能在 `about:addons` 里收回。
+1. **需授予「在隐私窗口中运行」**（见安装第 2 步）。
+2. **规则分流需额外授权一次。** Firefox 不支持内联 PAC，分流只能由扩展
+   逐请求判断，即浏览器将每个网址交给扩展评估，这需要「访问所有网站」权限。
+   入口位于**设置页 → 直连规则 → 「允许逐请求判断」**。拒绝则继续使用
+   全局代理，授予后可随时在 `about:addons` 中收回。
 
-   默认只要 `http://127.0.0.1/*`，所以只用全局代理的人不必为一个可选功能
-   交出这个权限（[为什么这样取舍](DESIGN.md#firefox-的可选权限)）。
+   默认仅申请 `http://127.0.0.1/*`，因此仅使用全局代理的用户无需为一项
+   可选功能交出该权限（[取舍依据](DESIGN.md#firefox-的可选权限)）。
 
-## 设计说明
+## 设计文档
 
-为什么 fail-closed、为什么两个平台的代码必须分开、为什么放弃了「内置 Core」——
-这些取舍连同踩过的坑都在 [DESIGN.md](DESIGN.md)。
+fail-closed 的取舍、两个平台的代码为何必须分开、「内置 Core」方案为何放弃，
+连同实现过程中的具体问题，均记录在 [DESIGN.md](DESIGN.md)。
 
-## 许可
+## 许可协议
 
 [MIT](LICENSE)
