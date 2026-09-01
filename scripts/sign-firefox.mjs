@@ -195,21 +195,58 @@ function buildSourceArchive() {
 
 /* ---------- 主流程 ---------- */
 
-/*
- * LICENSE 放进 dist-firefox/。
+/**
+ * 准备待签目录 —— `dist-firefox/` 的副本，加上 LICENSE。
  *
- * 发布用的 zip 由 scripts/package.mjs 生成，它会额外塞一个 LICENSE
- * （MIT 要求许可证随所有副本分发）。而 web-ext 只打 `--source-dir`
- * 里的东西 —— 不复制的话，签出来的 xpi 会比发布的 zip 少这个文件。
+ * 🔴 **不能直接签 `dist-firefox/`。** 此方第一版就是那么干的，
+ *    往构建产物里 `copyFileSync` 了一个 LICENSE，结果制造了两个 bug：
  *
- * 两份产物内容不一致本身就是个隐患：它让"发布的 zip"与"签名的 xpi"
- * 不再能互相印证，而 REVIEWERS.md 里给审核员的复现步骤也会对不上。
+ *    1. `package.mjs` 遍历 dist 时找到那个 LICENSE，**又额外 push 一次**
+ *       （MIT 要求许可证随副本分发，它一直是显式加的）——
+ *       于是发布的 zip 里 `LICENSE` 出现**两次**。一个畸形压缩包，
+ *       不同解压工具的处理方式并不一致。
+ *
+ *    2. web-ext 会在 `--source-dir` 里留一个 `.amo-upload-uuid`
+ *       状态文件，它随后被打进发布 zip —— 产物多了个陌生文件，
+ *       hash 也跟着变（3f107e8c… → a9d77b2a…），可复现性直接没了。
+ *
+ *    两个 bug 的根因是同一个：**签名步骤写了构建产物**。
+ *    构建产物应当只由构建产生，任何别的东西往里写都会以某种形式漏出去。
+ *
+ * ⚠️ 这个目录**刻意不清空**。web-ext 用 `.amo-upload-uuid` 记住上一次上传，
+ *    好在审核超时后重跑时**接着上次的**而不是新建一个版本 ——
+ *    而重复创建同一个版本会撞"版本已存在"。清掉它等于把那条恢复路径砍了。
+ *
+ * 放在 `release/` 下面，因为那整个目录已经在 .gitignore 里。
  */
-copyFileSync(resolve(ROOT, 'LICENSE'), resolve(DIST, 'LICENSE'))
+function prepareStaging() {
+  const staging = resolve(OUT_DIR, 'firefox-unsigned')
+  mkdirSync(staging, { recursive: true })
+
+  for (const entry of readdirSync(DIST, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile()) continue
+    const rel = join(entry.parentPath ?? entry.path, entry.name).slice(DIST.length + 1)
+    const target = resolve(staging, rel)
+    mkdirSync(dirname(target), { recursive: true })
+    copyFileSync(resolve(DIST, rel), target)
+  }
+
+  /*
+   * LICENSE 与发布 zip 保持一致（`package.mjs` 也是显式加的）。
+   *
+   * 两份产物内容不一致本身就是隐患：它让"发布的 zip"与"签名的 xpi"
+   * 不再能互相印证，而 REVIEWERS.md 给审核员的复现步骤也会对不上。
+   */
+  copyFileSync(resolve(ROOT, 'LICENSE'), resolve(staging, 'LICENSE'))
+
+  return staging
+}
+
+const STAGING = prepareStaging()
 
 const source = buildSourceArchive()
 
-const distFiles = readdirSync(DIST, { recursive: true, withFileTypes: true }).filter((e) =>
+const distFiles = readdirSync(STAGING, { recursive: true, withFileTypes: true }).filter((e) =>
   e.isFile(),
 )
 
@@ -233,8 +270,9 @@ const args = [
   '--yes',
   `web-ext@${WEB_EXT_VERSION}`,
   'sign',
+  // 🔴 签暂存目录，**不是** dist-firefox —— 见 prepareStaging() 的注释。
   '--source-dir',
-  DIST,
+  STAGING,
   '--artifacts-dir',
   OUT_DIR,
   '--channel',

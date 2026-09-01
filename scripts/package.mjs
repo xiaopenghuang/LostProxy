@@ -207,6 +207,44 @@ function packageTarget(target) {
   entries.push({ name: 'LICENSE', data: readFileSync(resolve(ROOT, 'LICENSE')) })
   entries.sort((a, b) => (a.name < b.name ? -1 : 1))
 
+  /*
+   * 🔴 同名条目只许有一个。
+   *
+   * 一个 zip 里出现两个同名条目是**畸形**的：规范没规定该用哪个，
+   * 不同解压工具（浏览器、unzip、7-zip）的处理方式并不一致，
+   * 而 `diff -r` 抓不到它 —— 解压时后者覆盖前者，目录树看起来完全正常。
+   *
+   * 此方真的撞过：`sign-firefox.mjs` 往 dist-firefox 里复制了一个 LICENSE，
+   * 而上面那行又显式加一次，于是发布包里 `LICENSE` 出现两次。
+   * 那个 bug 穿过了本文件所有既有闸门、也穿过了 CI 的 `diff -r`。
+   */
+  const seen = new Set()
+  for (const e of entries) {
+    gate(!seen.has(e.name), `${target.id}: 包内出现重复条目 ${e.name}`)
+    seen.add(e.name)
+  }
+
+  /*
+   * 🔴 别的工具留在 dist 里的状态文件不许进包。
+   *
+   * web-ext 会在它的 `--source-dir` 下留一个 `.amo-upload-uuid`。
+   * 那个文件进了包会让 hash 变（可复现性没了），且给用户装上一个
+   * 来路不明的文件。签名脚本现在用暂存目录、不碰 dist 了，
+   * 但这道闸门与它无关 —— **构建产物只该含构建产生的东西**
+   * 这条性质，不该依赖"没有别的东西往里写"。
+   *
+   * 判据用「点开头」而不是列一份黑名单：黑名单要跟着每个新工具更新，
+   * 而漏一项的后果是静默多打一个文件进去。本项目的产物里没有任何
+   * 该以点开头的文件。
+   */
+  for (const e of entries) {
+    const base = e.name.split('/').at(-1) ?? ''
+    gate(
+      !base.startsWith('.'),
+      `${target.id}: 包里有点开头的文件 ${e.name} —— 大概是别的工具留下的状态文件`,
+    )
+  }
+
   // manifest 引用的每个文件都必须在包里。少一个图标就是「装上去图标是空白」，
   // 少 background.js 就是「装上去直接报错」，都属于下载完才发现的那类失败。
   const present = new Set(entries.map((e) => e.name))
