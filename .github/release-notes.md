@@ -86,25 +86,46 @@ so Firefox has no update source to check.
 ## 校验 / Verify
 
 ```
-Edge / Chrome  __SHA256__
-Firefox        __FIREFOX_SHA256__
+Edge / Chrome  .zip   __SHA256__
+Firefox        .zip   __FIREFOX_SHA256__
 ```
+
+`.xpi` 的哈希在资产列表里的 `lostproxy-firefox-v__VERSION__.xpi.sha256`。
+它不在上面这份清单里，是因为签名是**发布之后**的手动步骤（要等 AMO 审核），
+生成这段说明时它还不存在。
+The `.xpi` hash is in its own `.sha256` asset — signing happens after the release is created,
+since it waits on AMO, so it is not in the list above.
 
 ```bash
 sha256sum lostproxy-v__VERSION__.zip                      # Linux / macOS / Git Bash
 certutil -hashfile lostproxy-v__VERSION__.zip SHA256      # Windows cmd
 ```
 
-两个包都由 GitHub Actions 从 commit `__COMMIT__` 构建，并带 Sigstore 签名的来源证明。
-可以用 GitHub CLI 验证它们确实来自本仓库的这次构建，而不是谁手动传上来的：
-
-Both are built by GitHub Actions from commit `__COMMIT__`, with Sigstore-signed build provenance
-attestations. Verify they really came from this repository's build rather than an upload:
+**两个 `.zip`** 由 GitHub Actions 从 commit `__COMMIT__` 构建，并带 Sigstore 签名的来源证明 ——
+可以验证它们确实来自本仓库的这次构建，而不是谁手动传上来的：
 
 ```bash
 gh attestation verify lostproxy-v__VERSION__.zip         --repo xiaopenghuang/LostProxy
 gh attestation verify lostproxy-firefox-v__VERSION__.zip --repo xiaopenghuang/LostProxy
 ```
+
+**`.xpi` 的来源不同，说明一下。** 它由 Mozilla 签名（这是它能长期安装的原因），
+但**在维护者本机构建**，所以**没有**上面那份 CI 来源证明。它的内容与
+`lostproxy-firefox-v__VERSION__.zip` 逐个文件一致 —— 只差一个被 AMO 重新格式化过的
+`manifest.json` —— 所以想核对的话把两个都下来解开比一比即可：
+
+```bash
+mkdir a b && unzip -q lostproxy-firefox-v__VERSION__.zip -d a && unzip -q lostproxy-firefox-v__VERSION__.xpi -d b
+diff -r a b --exclude=META-INF     # 只应看到 manifest.json 的格式差异
+```
+
+`META-INF/` 是 Mozilla 的签名，只在 `.xpi` 里有。
+
+The two `.zip` files are built by GitHub Actions from commit `__COMMIT__` with Sigstore-signed
+provenance. The `.xpi` is signed by Mozilla — which is what makes it permanently installable —
+but built on the maintainer's machine, so it carries **no** CI attestation. Its contents match the
+Firefox `.zip` file for file apart from a `manifest.json` that AMO reformats, so you can diff the
+two as above. `META-INF/` is Mozilla's signature and exists only in the `.xpi`.
 
 代理工具值得做这一步。也可以 `npm ci && npm run package` 自己从源码构建。
 Worth doing for a proxy tool. You can also build it yourself with `npm ci && npm run package`.
