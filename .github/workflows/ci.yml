@@ -36,18 +36,71 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test
-        run: npm run test
-
       # 打包本身也是一道校验：版本号三处一致、manifest 引用不悬空。
       # 在 PR 上就跑，别等打了 tag 才发现。
+      #
+      # 🔴 **必须排在 Test 之前。** `tests/platform-boundary.test.ts` 里那批
+      #    产物级断言用 `it.skipIf(!built)` 守着 —— dist/ 不存在时它们**静默跳过**。
+      #    此方原先把 Test 放在前面，于是那 8 条断言在 CI 上**从来没跑过**，
+      #    而它们守的是本项目最危险的跨平台差异（Firefox 包里不许出现
+      #    `disable_non_proxied_udp` —— 抄过去会被接受、不报错、防护更弱）。
+      #
+      #    一条永远 skip 的测试比没有测试更糟：它让人以为那件事被守着。
+      #    下面的 "no assertion was skipped" 那步就是为了不再依赖这个顺序被记住。
       - name: Build and package
         run: npm run package
 
-      - name: Verify archive extracts and matches dist
+      - name: Test
+        run: npm run test
+
+      # 顺序对了也要验一次「真的没跳过」—— 顺序是人维护的，会再被改坏。
+      #
+      # 已反向验证：把 dist/ 移开后这一步报出 8 条跳过，正是产物断言那批。
+      - name: Assert no test was skipped
         run: |
-          unzip -t release/lostproxy-*.zip
-          mkdir -p /tmp/check
-          unzip -q release/lostproxy-*.zip -d /tmp/check
-          diff -r dist /tmp/check --exclude=LICENSE
-          echo "archive matches dist/"
+          npx vitest run --reporter=json --outputFile=./vitest-results.json >/dev/null 2>&1 || true
+          node -e '
+            const r = require("./vitest-results.json");
+            const skipped = r.testResults
+              .flatMap((f) => f.assertionResults ?? [])
+              .filter((a) => a.status === "pending" || a.status === "skipped");
+            if (skipped.length > 0) {
+              console.error("These assertions were skipped. Usually that means dist/ was");
+              console.error("missing when the tests ran, so the bundle-level separation");
+              console.error("assertions never executed:");
+              for (const s of skipped) console.error("  " + s.fullName);
+              process.exit(1);
+            }
+            console.log("no assertion was skipped");
+          '
+          rm -f ./vitest-results.json
+
+      - name: Verify both archives extract and match their dist
+        run: |
+          # 🔴 逐个显式验，不用 glob。`lostproxy-*.zip` 会同时匹配到
+          #    Chromium 与 Firefox 两个包，而 `unzip` 把第二个参数当成
+          #    "要从第一个包里解出的文件名"，报 "filename not matched" ——
+          #    一个看起来像损坏、实际是命令行语义的错误。此方在 v0.4.0
+          #    打 tag 时正是这么让 CI 红的。
+          set -euo pipefail
+
+          check() {
+            local zip="$1" dist="$2" out="$3"
+            echo "--- $zip vs $dist"
+            unzip -t "$zip"
+            rm -rf "$out"
+            mkdir -p "$out"
+            unzip -q "$zip" -d "$out"
+            diff -r "$dist" "$out" --exclude=LICENSE
+            echo "    matches"
+          }
+
+          # 版本号从 package.json 读，避免在两处维护同一个数字。
+          # 钉确切文件名的额外好处：release/ 里若留着旧版本的包也不受影响。
+          VERSION=$(node -p "require('./package.json').version")
+
+          check "release/lostproxy-v${VERSION}.zip"         dist         ./check-chromium
+          check "release/lostproxy-firefox-v${VERSION}.zip" dist-firefox ./check-firefox
+
+          rm -rf ./check-chromium ./check-firefox
+          echo "both archives match their dist/"

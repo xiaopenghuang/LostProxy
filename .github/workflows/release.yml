@@ -44,14 +44,20 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test
-        run: npm run test
-
       # scripts/package.mjs 内部会校验 git tag / manifest.json / package.json
       # 三处版本号一致，不一致直接退出非零。
+      #
+      # 🔴 **排在 Test 之前**，与 ci.yml 同一个理由：
+      #    `tests/platform-boundary.test.ts` 那批产物断言用 `it.skipIf(!built)`
+      #    守着，dist/ 不存在时静默跳过。这里的实质风险比 CI 低（下面还有一步
+      #    直接 grep 解压后的包，验的甚至是更靠后的东西），但让一批断言
+      #    在发布路径上永远 skip 仍然没有道理。
       - name: Build and package
         id: pkg
         run: npm run package
+
+      - name: Test
+        run: npm run test
 
       - name: Verify archives
         run: |
