@@ -8,10 +8,22 @@ Each version section below is extracted by `.github/workflows/release.yml` and b
 
 ---
 
-## v0.4.1
+## v0.4.2
 
 打包层面的两处修复。**扩展的功能一行没改。**
 Two packaging-level fixes. **No functional change.**
+
+> **v0.4.1 请不要用** —— 它的 manifest 里有个错的 `gecko_android` 键，
+> 那实际上是在向 AMO **宣称支持 Firefox for Android**，而
+> `proxy.settings` 在那上面根本不存在。AMO 拒收了那次提交，
+> 所以 **v0.4.1 没有签好的 `.xpi`**。
+>
+> 对桌面用户它是无害的（`gecko_android` 在桌面被忽略），但它不可签名、
+> 且语义是错的。v0.4.2 取代它。
+>
+> **Skip v0.4.1** — its manifest declared Android compatibility that does not
+> work, AMO rejected the submission, and it therefore has no signed `.xpi`.
+> Harmless on desktop, but superseded.
 
 ### 修复 / Fixed
 
