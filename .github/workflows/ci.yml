@@ -104,3 +104,43 @@ jobs:
 
           rm -rf ./check-chromium ./check-firefox
           echo "both archives match their dist/"
+
+      # 🔴 AMO 审核会重建源码包并与提交的包逐字节 diff，Mozilla 的要求是
+      #    「There must be no differences」。这一步在本地就把那件事验一遍。
+      #
+      #    为什么值得花这二十秒：失败代价不是"CI 红了"，而是**提交被 AMO 退回**
+      #    ——白等一轮审核（自动签名要 24 小时，人工审核不定），
+      #    而退回的报错不会告诉你问题出在哪。
+      #
+      #    此方就是在"扮演一次审核员"时撞到了行尾符那个 bug：仓库没有
+      #    .gitattributes，而开发机的 git 配了 core.autocrlf=true，于是
+      #    `git archive` 导出 CRLF、工作区构建出 LF，4 个复制类文件
+      #    diff 出差异而内容看起来完全一样。单靠读文档不会发现。
+      - name: Verify the source archive reproduces the build
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+
+          # 与 scripts/sign-firefox.mjs 用同一条命令产生源码包。
+          git archive --format=zip -o "source-check.zip" HEAD
+
+          rm -rf ./repro && mkdir -p ./repro
+          unzip -q source-check.zip -d ./repro
+
+          # 严格按 REVIEWERS.md 给审核员的步骤走。这一步同时校验那份
+          # 说明书本身是对的 —— 一份过时的构建说明和没有说明一样糟。
+          cd ./repro
+          npm ci
+          npm run build:firefox
+          cp LICENSE dist-firefox/
+          cd ..
+
+          # ⚠️ 我们这边也要放 LICENSE。`scripts/package.mjs` 只把它塞进 zip、
+          #    不写进目录，而 `scripts/sign-firefox.mjs` 会复制进去 ——
+          #    所以"待签目录"里有它。这里对齐的是**签名路径**，不是打包路径。
+          cp LICENSE dist-firefox/
+
+          diff -r dist-firefox ./repro/dist-firefox
+          echo "a reviewer following REVIEWERS.md reproduces dist-firefox exactly"
+
+          rm -rf ./repro source-check.zip
