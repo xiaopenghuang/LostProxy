@@ -121,8 +121,33 @@ jobs:
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
 
+          # 🔴 先验一件事：被 gitignore 的文件不会进源码包。
+          #
+          #    这个包会寄给 Mozilla，而仓库里被忽略的东西正是**最不能寄出去的**
+          #    那些 —— `.env` 装着 AMO 凭据，`docs/` 是维护者的私有设计笔记。
+          #
+          #    用一个一次性探针文件名，**刻意不碰真的 `.env`**。
+          #    此方手动验这件事时用 `printf > .env` 造假凭据，把 Master 真的
+          #    那份覆盖并删了 —— 而 `.env` 不在版本控制里，捞不回来，
+          #    AMO 的 secret 又只显示一次，只能撤销重发。
+          #
+          #    所以这项检查该由机器用安全的名字做，而不是靠人每次记得小心。
+          PROBE=".env.citest"
+          echo "AMO_API_SECRET=canary-must-not-ship" > "$PROBE"
+          git check-ignore -q "$PROBE" || {
+            echo "::error::$PROBE 竟然没被 gitignore 忽略 —— 那条规则可能被改坏了"
+            rm -f "$PROBE"; exit 1
+          }
+
           # 与 scripts/sign-firefox.mjs 用同一条命令产生源码包。
           git archive --format=zip -o "source-check.zip" HEAD
+
+          if unzip -p source-check.zip | grep -q "canary-must-not-ship"; then
+            echo "::error::源码包里带上了被 gitignore 的内容 —— 它会被寄给 Mozilla"
+            rm -f "$PROBE"; exit 1
+          fi
+          rm -f "$PROBE"
+          echo "gitignored files stay out of the source archive"
 
           rm -rf ./repro && mkdir -p ./repro
           unzip -q source-check.zip -d ./repro
