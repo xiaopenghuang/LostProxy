@@ -21,15 +21,29 @@ to load once enabled — that is deliberate fail-closed behaviour, not a bug.
 
 ## 下载哪一个 / Which download
 
-| 浏览器 / Browser | 文件 / File |
-| --- | --- |
-| Edge / Chrome | `lostproxy-v__VERSION__.zip` |
-| Firefox | `lostproxy-firefox-v__VERSION__.zip` |
+| 浏览器 / Browser | 文件 / File | |
+| --- | --- | --- |
+| Edge / Chrome | `lostproxy-v__VERSION__.zip` | 解压后「加载解压缩的扩展」 |
+| **Firefox** | **`lostproxy-firefox-v__VERSION__.xpi`** | **签过名，直接装，重启不掉** |
+| Firefox（临时） | `lostproxy-firefox-v__VERSION__.zip` | 只能 `about:debugging` 临时载入 |
 
-两个包**不能混用**。Firefox 与 Chromium 的代理 API 完全不同，装错的表现是
-「装上了但代理压根没生效」而浏览器不报错。
-The two are **not interchangeable** — Firefox and Chromium have entirely different proxy APIs,
-and using the wrong one silently fails to proxy anything.
+Chromium 与 Firefox 的包**不能混用** —— 两者的代理 API 完全不同，
+装错的表现是「装上了但代理压根没生效」而浏览器不报错。
+The Chromium and Firefox builds are **not interchangeable** — the proxy APIs differ entirely,
+and the wrong one silently proxies nothing.
+
+**Firefox 用户请下 `.xpi`。** 它由 Mozilla 签名，可以从 `about:addons` 直接安装并长期使用。
+那个 `.zip` 只能临时载入、关掉浏览器就消失 —— 它留在这里是因为它由 CI 构建、带 Sigstore
+来源证明，想核对可复现性的人用得上。
+
+⚠️ `.xpi` **不会自动更新**：它走自分发渠道、在 AMO 上搜不到，因此 Firefox 没有更新源可查。
+升级需要回来手动下载。
+
+**Firefox users want the `.xpi`** — Mozilla-signed, installs from `about:addons`, survives
+restarts. The `.zip` can only be loaded temporarily and vanishes when Firefox closes; it stays
+here because it is the CI-built artifact carrying Sigstore provenance, for anyone verifying
+reproducibility. Note the `.xpi` **does not auto-update**: it is self-distributed and unlisted,
+so Firefox has no update source to check.
 
 ## 安装：Edge / Chrome
 
@@ -44,12 +58,18 @@ and using the wrong one silently fails to proxy anything.
 
 ## 安装：Firefox
 
-1. 下载 `lostproxy-firefox-v__VERSION__.zip` 并**解压**
-2. 打开 `about:debugging#/runtime/this-firefox`
-3. 点 **临时载入附加组件 / Load Temporary Add-on**，选解压出来文件夹里的 `manifest.json`
-4. 🔴 打开 `about:addons` → 点开 LostProxy → 把 **在隐私窗口中运行 / Run in Private Windows**
-   **打开**
-5. 到 ⚙ Settings 填代理端口（同上）
+1. 下载 `lostproxy-firefox-v__VERSION__.xpi`（**不用解压**）
+2. 打开 `about:addons` → 右上**齿轮图标** → **从文件安装附加组件 / Install Add-on From File**
+3. 🔴 点开 LostProxy → 把 **在隐私窗口中运行 / Run in Private Windows** **打开**
+4. 到 ⚙ Settings 填代理端口（同上）
+5. 想用智能分流的话：设置页 → 直连规则 → 点 **允许逐请求判断**
+
+> 第 5 步只有用分流才需要。Firefox 不支持内联 PAC，分流只能由扩展逐个请求判断 ——
+> 也就是浏览器会把每个网址问一遍，所以要这个权限。不给就继续用全局代理，
+> 给了随时能在 `about:addons` 里收回。
+>
+> Step 5 is only needed for rule-based routing. Firefox has no inline PAC, so routing works by
+> asking the extension per request — hence the permission. Decline and global proxying still works.
 
 > **第 4 步不是可选的。** Firefox 规定：代理设置对隐私窗口与普通窗口同时生效，
 > 因此不给这个权限就**完全不允许**扩展改代理。没开的话扩展会明确告诉你，
