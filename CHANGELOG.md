@@ -82,10 +82,27 @@ Firefox support. All business logic and UI shared; browser differences confined 
 
 ### 尚未完成 / Not yet done
 
-- **Firefox 真机隔离测试。** 目前只有单元测试覆盖，`docs/test-plan.md` §6.5 列了 10 项
-  只有真机能验的检查，其中 X0b（装了的走代理、没装的不走）与 X3（停掉内核后不静默直连）
-  两项决定这个移植是否真的成立。Chromium 侧的 18/18 验收不自动适用于 Firefox。
-  **Real-machine egress isolation on Firefox is unverified** — a known open item, not a guarantee.
+- ✅ **Firefox 真机隔离测试已通过**（2026-08-31）。`docs/test-plan.md` §6.5 全部通过，
+  其中决定移植成立与否的两项：X0b（装了的走代理、没装的不走）与
+  X3（停掉内核后页面打不开、不静默直连）。后者尤其值得记 ——
+  Chromium 靠 `mandatory: true` 兜的那一层在 Firefox 上没有对应物，
+  所以这不是同一个结论的复测，而是第二个独立结论。
+  **Real-machine egress isolation and fail-closed both verified on Firefox.**
+
+- 🔴 **Firefox for Android 上装得上，但必然全废 —— 下个版本必须修。**
+  `proxy.settings` 在 Android 上**根本没实现**（Bugzilla 1725981 至今开着，
+  实报 `proxy.settings is not supported on android.`），而我们的
+  `applyProxy` / `releaseProxy` / `readProxyState` 全走它。
+
+  manifest 没拦住：只声明了 `gecko.strict_min_version`，没有 `gecko_android`，
+  于是 Android 继承同一个下限、被标成兼容。用户装上得到一个开关点不动的扩展。
+
+  修法是声明 `gecko_android.strict_min_version` 为一个不可能满足的版本。
+  本版不修的原因纯粹是流程：改 manifest 就得重签，而 `0.4.0` 在 AMO 上
+  是一次性的，得 bump 版本再走一轮审核。
+  **Firefox for Android is silently broken** — `proxy.settings` does not exist
+  there, and nothing in the manifest prevents installation. Fix pending in the
+  next release.
 
 ---
 
