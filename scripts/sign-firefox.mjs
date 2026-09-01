@@ -60,7 +60,7 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const OUT_DIR = resolve(ROOT, 'release')
@@ -243,8 +243,54 @@ const args = [
   source.outPath,
 ]
 
+/**
+ * 找出怎么调 npx。返回 `[可执行文件, 前置参数]`。
+ *
+ * 🔴 Windows 上这件事有两层坑，此方两层都踩了：
+ *
+ *   1. `npx` 是 `npx.cmd`（batch shim），不是可执行文件。
+ *      `execFileSync('npx', ...)` 直接 **ENOENT**。
+ *
+ *   2. 换成 `'npx.cmd'` 之后变成 **EINVAL** —— Node 为 CVE-2024-27980
+ *      加了防护：自 18.20.2 / 20.12.2 / 21.7.3 起，不带 `shell: true`
+ *      就不允许 spawn `.cmd` / `.bat`。
+ *
+ * ⚠️ 刻意**不用** `shell: true` 来绕第 2 层。那会让参数被拼进一条 shell
+ *    命令行重新解析，于是路径里的空格与特殊字符得自己转义 ——
+ *    而本项目的开发路径带非 ASCII（`I:\开发\LostProxy`），
+ *    正是最容易在这一层出问题的形状。更别提那正是 CVE-2024-27980 本身
+ *    要防的东西：为了绕过一个安全修复而重新引入它防的问题。
+ *
+ * 解法是**绕过 shim**：`npx` 本质是 `node <npm>/bin/npx-cli.js`，
+ * 直接用当前的 node 去跑那个 JS 入口。参数保持 argv 数组语义 ——
+ * 逐个原样传给子进程，不经过任何 shell 解析。
+ */
+function resolveNpx() {
+  const nodeDir = dirname(process.execPath)
+  const candidates = [
+    resolve(nodeDir, 'node_modules', 'npm', 'bin', 'npx-cli.js'),
+    // Linux / macOS 的常见布局：node 在 bin/，npm 在 lib/node_modules/。
+    resolve(nodeDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npx-cli.js'),
+  ]
+
+  for (const cli of candidates) {
+    if (existsSync(cli)) return [process.execPath, [cli]]
+  }
+
+  /*
+   * 找不到 npx-cli.js 就退回直接调 `npx`。
+   *
+   * 在 Linux / macOS 上那本来就能用（npx 是个真 shim 脚本，不是 .cmd）。
+   * 在 Windows 上它会失败 —— 但失败得**清楚**（ENOENT/EINVAL，下面的
+   * catch 会说明什么都没提交），而这比此方在这里编一条猜测的路径要好。
+   */
+  return ['npx', []]
+}
+
+const [npxBin, npxPrefix] = resolveNpx()
+
 try {
-  execFileSync('npx', args, {
+  execFileSync(npxBin, [...npxPrefix, ...args], {
     cwd: ROOT,
     stdio: 'inherit',
     env: {
@@ -253,17 +299,39 @@ try {
       WEB_EXT_API_SECRET: apiSecret,
     },
   })
-} catch {
+} catch (thrown) {
   /*
-   * web-ext 自己会把 AMO 的报错打出来（addons-linter 的校验结果、
-   * 审核状态等），这里不再包一层 —— 复述只会把有用的原文推到屏幕外。
+   * 🔴 分清"web-ext 压根没起来"与"它跑了但失败"。
    *
-   * 常见的两类：
-   *   - 校验失败 → 按它列出的项改，重跑
-   *   - 等待审核超时 → 提交已经在 AMO 那边了，别重传（会撞版本号已存在），
-   *     去 https://addons.mozilla.org/developers/ 看状态并下载
+   * 两者该说的话完全相反：前者**什么都没提交**，版本号还是干净的，
+   * 直接重跑就行；后者提交可能已经在 AMO 那边，重传会撞
+   * "版本已存在"，得去开发者面板看状态。
+   *
+   * 此方第一版把两者合成一条提示，于是在 web-ext 根本没启动的情况下
+   * 告诉 Master"提交可能已在 AMO 那边" —— 一个会让人不敢重跑、
+   * 甚至去手动改版本号的误导。
    */
-  fail('签名未完成。若是等待审核超时，提交已在 AMO 那边，去开发者面板下载，别重传。')
+  if (thrown?.code === 'ENOENT' || thrown?.code === 'EINVAL') {
+    fail(
+      `启动 npx 失败（${thrown.code}，用的是 ${npxBin}）。\n` +
+        '  web-ext **没有启动，什么都没提交**，版本号仍然干净 —— 修好后直接重跑。\n\n' +
+        '  确认 node 与 npm 都在（node -v / npm -v）。\n' +
+        '  EINVAL 通常意味着退回到了直接调 npx.cmd，而 Node 不允许那样做\n' +
+        '  （CVE-2024-27980 的防护）—— 说明上面 resolveNpx() 没找到 npx-cli.js。',
+    )
+  }
+
+  /*
+   * 到这里说明 web-ext 真的跑过了，它自己已经把 AMO 的原始报错打在上面
+   * （addons-linter 的校验结果、审核状态等）。这里不复述 ——
+   * 复述只会把那些有用的原文推到屏幕外。
+   */
+  fail(
+    '签名未完成，具体原因见上面 web-ext 的输出。\n\n' +
+      '  校验失败      → 按它列出的项改，然后重跑\n' +
+      '  等待审核超时  → 提交已经在 AMO 那边了，**别重传**（会撞版本已存在）。\n' +
+      '                  去 https://addons.mozilla.org/developers/ 看状态并下载',
+  )
 }
 
 console.log(`\n✓ 签好的 .xpi 在 release/ 里。`)
