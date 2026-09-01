@@ -149,6 +149,144 @@ reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v 
 
 It must read `0x0`.
 
+### A different exit per browser
+
+Routing Edge and Chrome through different exit nodes needs no change to the
+extension, only Mihomo-side configuration. The mechanism is Mihomo's
+[`listeners`](https://wiki.metacubex.one/en/config/inbound/listeners/):
+additional inbound ports beside the main one, each able to name its own exit
+through the `proxy` field.
+
+It takes two blocks, and **they go in two different places**. In Clash Verge Rev
+both live in the subscription card's context menu, not the global one. See
+"Switching subscriptions" below for why.
+
+First, under **Edit Proxy Groups**, append two groups of your own:
+
+```yaml
+append:
+  - name: EXIT-A
+    type: select
+    include-all: true
+    filter: "(?i)香港|hk"
+    empty-fallback: REJECT         # leak guard, not optional
+    default-selected: 香港HK-A     # optional; must name a node that exists
+  - name: EXIT-B
+    type: select
+    include-all: true
+    filter: "(?i)日本|jp"
+    empty-fallback: REJECT
+    default-selected: 日本JP-A
+```
+
+🔴 **Do not put `proxy-groups` in the extend config.** There the smallest unit of
+an override is a key-value pair and a list counts as one value, so writing
+`proxy-groups:` **replaces every proxy group** the subscription defines — the
+provider's own selector, ChatGPT, Netflix and the rest all vanish. The Edit Proxy
+Groups entry takes `prepend` / `append` / `delete` and appends instead.
+
+Second, under **Edit Extend Config**, pin one inbound port to each group:
+
+```yaml
+listeners:
+  - name: browser-a
+    type: mixed
+    port: 7801
+    listen: 127.0.0.1
+    proxy: EXIT-A
+  - name: browser-b
+    type: mixed
+    port: 7802
+    listen: 127.0.0.1
+    proxy: EXIT-B
+```
+
+Then, in each browser's LostProxy settings page:
+
+```text
+Edge   →  proxy port 7801  +  primary group EXIT-A
+Chrome →  proxy port 7802  +  primary group EXIT-B
+```
+
+Keep the controller port the same on both. Extension settings are stored per
+browser profile, so the two configurations do not interfere, and node switching
+and latency tests stay independent.
+
+🔴 **`listen` must be `127.0.0.1`.** The official example uses `0.0.0.0`, which
+exposes the proxy to the local network for anyone on the same segment to use.
+
+🔴 **`empty-fallback: REJECT` is not optional.** An empty proxy group falls back
+by **default** to
+[`COMPATIBLE`](https://wiki.metacubex.one/en/config/proxies/built-in/), which is
+**equivalent to `DIRECT`** — traffic leaves unproxied. A group goes empty when
+`filter` matches nothing after a subscription update, or when the core restarts
+before the proxy-provider has finished downloading
+([mihomo #2499](https://github.com/MetaCubeX/mihomo/issues/2499)). The leak
+happens inside Mihomo: the browser-side connection is established normally, so
+LostProxy's fail-closed never sees it. Set to `REJECT`, an empty group refuses
+the connection instead of going direct — verified on mihomo v1.19.30: pointing
+`filter` at a keyword that matches nothing collapsed the group to `[REJECT]`, and
+the corresponding port refused connections rather than exposing the real IP.
+
+⚠️ **Do not use `proxies: [REJECT]` for this instead.** That makes `REJECT` an
+ordinary member — selectable and cacheable — which introduces two new problems. A
+`select` group with no prior choice picks its **first member**, and entries in
+`proxies` sort ahead of what `include-all` pulls in, so everything is rejected by
+default. Worse, once `REJECT` is in the selection cache a **reload will not clear
+it** and you have to switch by hand (`store-selected` outranks `default-selected`;
+verified). `empty-fallback` only applies when the group is genuinely empty and
+never joins the member list.
+
+`default-selected` is optional — it just puts the default on a faster node instead
+of the alphabetically first one. Both fields need core **v1.19.28+**, and older
+cores **ignore them silently while config validation still passes**, so only the
+`/proxies` API distinguishes "written" from "in effect".
+
+**Why your own group names rather than the provider's.** The name `proxy` points
+at must be valid or the core errors out. Providers rename and remove groups on
+subscription updates, which breaks a config that hard-codes their names. A name
+like `EXIT-A` lives in your own config layer, and `include-all` plus `filter`
+pulls in whatever the current subscription offers, so changing nodes does not
+break the reference.
+
+**Do not pin to a single node.** Pointing `proxy` at a node fixes the exit and
+leaves that browser's node switcher visible but inert, which looks like a fault
+and is not one.
+
+Two more things:
+
+1. **Both browsers share one controller**, so both can see every proxy group.
+   The isolation rests on the primary group being set differently; point both at
+   the same group and switching in one affects the other.
+2. **`proxy` makes that listener bypass Mihomo's `rules` entirely.** This does
+   not affect the direct-connect list, since LostProxy routes at the browser
+   level via PAC and returns DIRECT before traffic reaches Mihomo. To keep
+   core-side rules, use `rule: <sub-rule name>` instead of `proxy`.
+
+### Switching subscriptions
+
+Both blocks above go in the **per-subscription** entries, so they apply to that
+subscription only. That is deliberate: `filter` and `default-selected` depend on
+how a particular provider names its nodes, and pointing `proxy` at a name that
+does not exist stops the core from starting. Put them in the global entries and
+switching to another subscription takes the core down, because those group names
+are not there.
+
+Both **survive subscription updates**. Verge stores each subscription's merge /
+script / rules / proxies / groups as separate files, and an update only rewrites
+the downloaded one.
+
+What they **reference** can still change: if the provider renames its nodes or
+retires a whole region, `filter` matches nothing and the group falls to its
+`empty-fallback`. That browser then loses connectivity rather than **going
+direct** — which is what the 🔴 note above buys you.
+
+To use this with several subscriptions, write a copy into each subscription's
+extend config, adjusting `filter` to that provider's node naming. If you need
+two subscriptions live at the **same time** rather than switching between them,
+run two Mihomo instances with separate controllers and configs. The cost is two
+processes, and Verge manages only one of them.
+
 ## Verifying the scope
 
 Open <https://ipinfo.io/ip> in the browser with LostProxy installed **and in

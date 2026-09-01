@@ -131,6 +131,123 @@ reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v 
 
 结果应为 `0x0`。
 
+### 多浏览器不同出口
+
+让 Edge 与 Chrome 分别走不同的出口节点，不需要修改扩展，在 Mihomo 侧配置即可。
+机制是 Mihomo 的 [`listeners`](https://wiki.metacubex.one/en/config/inbound/listeners/)：
+除主端口外另开入站端口，每个端口可用 `proxy` 字段单独指定出口。
+
+配置分两步，且**两步的入口不同**。以 Clash Verge Rev 为例，都在订阅卡片的右键菜单里，
+不要用全局入口 —— 原因见下方「切换订阅」。
+
+第一步，**在「编辑代理组」里**追加两个属于自己的策略组：
+
+```yaml
+append:
+  - name: EXIT-A
+    type: select
+    include-all: true
+    filter: "(?i)香港|hk"
+    empty-fallback: REJECT         # 防泄漏兜底，不能省
+    default-selected: 香港HK-A     # 可选，填一个真实存在的节点名
+  - name: EXIT-B
+    type: select
+    include-all: true
+    filter: "(?i)日本|jp"
+    empty-fallback: REJECT
+    default-selected: 日本JP-A
+```
+
+🔴 **不要把 `proxy-groups` 写进扩展配置。** 扩展配置的最小覆写单位是键值对，
+列表整体视为一个值 —— 在那里写 `proxy-groups:` 会把订阅里的**全部策略组替换掉**
+（`节点选择`、`ChatGPT`、`Netflix` 等全部消失）。「编辑代理组」这个入口有
+`prepend` / `append` / `delete`，是追加语义。
+
+第二步，**在「编辑扩展配置」里**让两个入站端口各自钉住一个组：
+
+```yaml
+listeners:
+  - name: browser-a
+    type: mixed
+    port: 7801
+    listen: 127.0.0.1
+    proxy: EXIT-A
+  - name: browser-b
+    type: mixed
+    port: 7802
+    listen: 127.0.0.1
+    proxy: EXIT-B
+```
+
+随后在两个浏览器的 LostProxy 设置页分别填入：
+
+```text
+Edge   →  代理端口 7801  +  主策略组 EXIT-A
+Chrome →  代理端口 7802  +  主策略组 EXIT-B
+```
+
+Controller 端口两边一致。扩展设置按浏览器 profile 独立存储，因此两份配置互不干扰，
+各自的节点切换与延迟测速也互不影响。
+
+🔴 **`listen` 必须填 `127.0.0.1`。** 官方文档示例使用 `0.0.0.0`，那会将代理
+暴露到局域网，同网段的任何人都可直接使用。
+
+🔴 **`empty-fallback: REJECT` 不是可选项。** 策略组为空时**默认**回退到
+[`COMPATIBLE`](https://wiki.metacubex.one/en/config/proxies/built-in/)，
+而它**等价于 `DIRECT`** —— 流量会不经代理直接出网。`filter` 在订阅更新后
+筛不到任何节点、或内核重启时 proxy-provider 尚未下载完成，都会让组变空
+（[mihomo #2499](https://github.com/MetaCubeX/mihomo/issues/2499)）。
+这种泄漏发生在 Mihomo 内部：浏览器侧连接正常建立，LostProxy 的 fail-closed
+看不到它。改成 `REJECT` 后，组空时拒绝连接而非静默直连 —— 已在 mihomo v1.19.30
+上实测：把 `filter` 改成匹配不到的关键词后该组回退为 `[REJECT]`，对应端口拒绝
+连接、未返回真实 IP。
+
+⚠️ **不要改用 `proxies: [REJECT]` 达到同样目的。** 那样 `REJECT` 会成为一个
+可被选中、可被缓存的正常成员，带来两个新问题：`select` 组在没有历史选择时选
+**第一个成员**，而 `proxies` 里的项排在 `include-all` 纳入的节点之前，于是默认
+全部拒绝；更麻烦的是一旦缓存里存了 `REJECT`，**重载也出不来**，只能手动切
+（`store-selected` 优先级高于 `default-selected`，实测如此）。
+`empty-fallback` 只在组真的为空时生效，不进成员列表。
+
+`default-selected` 是可选的，只是让默认项落在延迟较好的节点上，不写则按名字
+取第一个。它与 `empty-fallback` 都需要内核 **v1.19.28+**，且旧内核会
+**静默忽略、配置校验照样通过** —— 只有查 `/proxies` API 才能区分「写了」和
+「生效了」。
+
+**为什么用自己的组名而不是机场的组。** `proxy` 指向的名字必须有效，否则内核报错。
+机场在订阅更新时改组名或删组，写死机场组名的配置就会失效。`EXIT-A` 这类名字
+在自己的配置层里，`include-all` + `filter` 按名字自动纳入当前订阅的节点，
+机场换节点不影响引用。
+
+**别钉到单个节点。** `proxy` 指向节点时出口固定，该浏览器的节点切换器仍然显示、
+但按下无效 —— 看起来像故障而实际不是。
+
+两点补充：
+
+1. **两个浏览器共用同一个 Controller**，因此两边都能看到全部策略组。隔离依赖
+   「主策略组」填不同的值；若填成同一组，在一侧切换会影响另一侧。
+2. **`proxy` 会使该 listener 完全跳过 Mihomo 的 `rules`。** 这不影响直连清单，
+   因为 LostProxy 的分流是浏览器级 PAC，在流量进入 Mihomo 之前即已返回 DIRECT。
+   若需保留内核侧规则，改用 `rule: <sub-rule 名>` 代替 `proxy`。
+
+### 切换订阅
+
+上面两段配置都写在**订阅级**入口里，因此只对该订阅生效。这是刻意的：
+`filter` 与 `default-selected` 都与具体机场的节点命名有关，而 `proxy` 指向不存在的
+名字会让内核直接启动失败。写进全局入口的话，切换到另一个订阅时那些组名不存在，
+内核当场起不来。
+
+这两处配置**不会被订阅更新覆盖**。Verge 把每个订阅的 merge / script / rules /
+proxies / groups 各存为独立文件，更新订阅只重写下载下来的那一份。
+
+但配置**引用的东西**可能变：机场若改了节点命名风格或下线整个地区的节点，
+`filter` 就会筛空，此时组走 `empty-fallback` —— 表现是那个浏览器上不了网，
+而**不是**静默直连。这正是上面那个 🔴 换来的结果。
+
+多个订阅都要这套配置时，在每个订阅的扩展配置里各写一份，`filter` 按各自机场的
+节点命名调整。需要不同订阅**同时**生效而非切换时，改为运行两个 Mihomo 实例，
+各自独立的 Controller 与配置；代价是两个进程，且 Verge 只管理其中一个。
+
 ## 验证
 
 在安装了 LostProxy 的浏览器与**未安装的另一个浏览器**中同时打开
