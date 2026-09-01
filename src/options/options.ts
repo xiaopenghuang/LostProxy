@@ -47,6 +47,7 @@ const el = {
   subsResult: document.querySelector<HTMLElement>('#subs-result'),
   probePort: document.querySelector<HTMLButtonElement>('#probe-port'),
   saveBar: document.querySelector<HTMLElement>('#save-bar'),
+  versionTag: document.querySelector<HTMLElement>('#version-tag'),
   routingPerm: document.querySelector<HTMLElement>('#routing-perm'),
   grantRoutingPerm: document.querySelector<HTMLButtonElement>('#grant-routing-perm'),
   routingPermResult: document.querySelector<HTMLElement>('#routing-perm-result'),
@@ -703,6 +704,21 @@ el.subsList?.addEventListener('click', async (event) => {
  */
 el.form?.addEventListener('input', refreshDirtyState)
 el.form?.addEventListener('change', refreshDirtyState)
+
+/*
+ * 版本号从 manifest 读，不写死在 HTML 里。
+ *
+ * 原先 index.html 里硬编码着 `v0.2.0`，于是从 V0.3 起界面一直显示错的版本 ——
+ * 改版本号时要动 package.json 与两个 manifest，谁也不会想到还有个 HTML 字面量。
+ *
+ * manifest 是单一真源：`scripts/package.mjs` 有闸门保证它与 package.json 一致，
+ * 所以从这里读到的必然就是真实版本。
+ *
+ * 不放进 `applyStaticText()`：那个函数每次切语言都会重跑，而版本号与语言无关。
+ */
+if (el.versionTag) {
+  el.versionTag.textContent = `v${chrome.runtime.getManifest().version}`
+}
 
 // 先用浏览器语言把静态文案填上，避免加载期间一片空白。
 applyStaticText()

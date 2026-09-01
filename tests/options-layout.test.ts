@@ -193,3 +193,51 @@ describe('保存语义的可见性', () => {
     expect(card?.classList.contains('card--accent')).toBe(true)
   })
 })
+
+describe('🔴 版本号不许写死在界面里', () => {
+  /*
+   * 这一组是补一个真实 bug 的。
+   *
+   * `index.html` 里曾硬编码着 `<span class="version-tag">v0.2.0</span>`，
+   * 于是从 V0.3 起设置页一直显示错的版本号 —— 一路穿过 V0.3、V0.4
+   * 两次发布都没人发现，最后是 Master 自己看到的。
+   *
+   * 为什么没被发现：改版本号要动 package.json 与两个 manifest，
+   * 三处都有闸门盯着（`scripts/package.mjs` 校验它们一致），
+   * 而谁也不会想到还有第四处、且是个 HTML 字面量。
+   *
+   * 所以判据不是"现在的数字对不对"（那还是会漂），
+   * 而是**界面里不许出现版本号字面量**。
+   */
+
+  it('🔴 HTML 里没有任何 vX.Y.Z 字面量', () => {
+    const versionLike = /v\d+\.\d+\.\d+/g
+
+    for (const page of ['src/options/index.html', 'src/popup/index.html']) {
+      /*
+       * 先剥掉注释再匹配。注释不会渲染给用户，所以里面出现版本号无害 ——
+       * 而那处解释这个 bug 的注释恰好要举 `v0.2.0` 当例子，
+       * 举具体数字比含糊说"某个旧版本"有用得多。
+       */
+      const rendered = read(page).replace(/<!--[\s\S]*?-->/g, '')
+      const found = rendered.match(versionLike) ?? []
+      expect(found, `${page} 里写死了版本号：${found.join(', ')}`).toEqual([])
+    }
+  })
+
+  it('版本标签留空，交给运行时填', () => {
+    // 空的 span + 一个 id。填它的代码在 options.ts，读的是
+    // `chrome.runtime.getManifest().version` —— manifest 是单一真源。
+    const tag = document.querySelector('#version-tag')
+    expect(tag).not.toBeNull()
+    expect(tag?.textContent?.trim()).toBe('')
+  })
+
+  it('🔴 options.ts 真的从 manifest 读', () => {
+    /*
+     * 只断言 span 是空的不够 —— 那样"忘了写填充代码"也能通过，
+     * 而症状是版本号那一块干脆是空白。
+     */
+    expect(read('src/options/options.ts')).toContain('getManifest().version')
+  })
+})
