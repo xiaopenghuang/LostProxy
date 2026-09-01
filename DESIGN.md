@@ -159,7 +159,7 @@ Mihomo Controller 探不通只显示灰点，**不报警**。
 
 ---
 
-## 版本下限与 Android 排除
+## 版本下限与 Android
 
 `manifest.firefox.json` 里两个值需要解释，而 JSON 写不了注释：
 
@@ -182,26 +182,75 @@ Mihomo Controller 探不通只显示灰点，**不报警**。
 留在那个区间的只有关掉了自动更新的人。代价从"丢一批用户"变成了几乎零，
 而收益是内置的数据同意界面真的生效、而不是被静默忽略。
 
-### 为什么 Android 是 999
-
-**这是个哨兵值，用来排除 Android，不是真的目标版本。**
+### Android：`gecko_android` 刻意**不写**
 
 `proxy.settings` 在 Firefox for Android 上**根本没实现**
 （Bugzilla 1725981 至今开着，实报 `proxy.settings is not supported on android.`），
 而本扩展的 `applyProxy` / `releaseProxy` / `readProxyState` 全走它。
+所以绝不能宣称支持 Android。
 
-不写 `gecko_android` 的话，Android **继承桌面的下限**（MDN 明说"If not provided,
-defaults to the version determined by `gecko.strict_min_version`"），
-于是 AMO 把它标成 Android 兼容 —— 用户装上得到一个开关点不动的扩展。
+🔴 **而声明 `gecko_android` 恰恰就是宣称支持。** Extension Workshop 原话：
 
-**让一个平台装不上，比让它装上后必然失败要诚实。**
+> To signal to AMO that your extension is compatible with Android, include, at
+> least, an empty `gecko_android` object. **If you don't, AMO assumes that the
+> extension is not compatible with Android.**
 
-999 是 manifest schema 允许的最大主版本号（模式是 `^[0-9]{1,3}(\.[a-z0-9]+)+$`，
-所以 `9999` 会被拒）。按现在每年约 11 个版本的节奏，Firefox 要 77 年才到那儿。
+此方一度把方向搞反了 —— 读到 MDN 里 `strict_min_version` 那句「If not provided,
+defaults to the version determined by `gecko.strict_min_version`」，
+就以为"不写会继承桌面下限并被标成兼容"。那句话讲的是**已经写了 `gecko_android`
+时版本号怎么定**，不是"没写会怎样"。
+
+于是此方加了个 `gecko_android: {strict_min_version: "999.0"}` 想"排除 Android"，
+而那实际上是在**打开** Android 支持。AMO 以
+`Unknown strict_min_version 999.0 for Firefox for Android` 拒了它 ——
+恰好拦住了这个 bug。
+
+已核实 v0.4.0（不含此键）在 AMO 上的兼容性记录：
+
+```json
+{"firefox": {"min": "128.0", "max": "*"}}
+```
+
+只有 `firefox`，没有 `android`。**它从来就没被标成 Android 兼容。**
+
+### ⚠️ 一件做不到的事
+
+**没有任何 manifest 键能阻止 Android 安装。** Extension Workshop：
+
+> Omitting `gecko_android` **does not affect Firefox for Android's ability to
+> install the extension.**
+
+所以能做到的只是"AMO 不宣传它支持 Android"。真有人在 Android 上装了，
+`proxy.settings.set()` 会抛，而 `enableProxy` 会把那句原文报给用户 ——
+不好看，但诚实，且用户看到的是"写入代理设置失败：proxy.settings is not
+supported on android."，足够定位问题。
+
+（此方此前在 README 里写过"下个版本会在 manifest 里明确排除"，那是做不到的事。）
 
 ⚠️ 理论上能靠 `proxy.onRequest`（Android **支持**它）单独实现 Android 路径，
 但那要把全局代理也改成逐请求判断，且 `<all_urls>` 要从可选变成**必需**权限
 —— 与上面那节的取舍方向相反。真要做是一个独立特性，不是一处修补。
+
+### 还剩一条 addons-linter 警告，清不掉
+
+```
+KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION
+  "strict_min_version" requires Firefox for Android 140, which was released
+  before version 142 introduced support for data_collection_permissions.
+```
+
+清它只有两条路，两条都不该走：
+
+| 做法 | 代价 |
+| --- | --- |
+| 声明 `gecko_android: {strict_min_version: "142.0"}` | **谎称支持 Android**，而它在那上面根本跑不了 |
+| `gecko` 抬到 142 | 排除 **ESR 140** —— 当前 ESR，而校园网正是 ESR 用户最集中的场景 |
+
+而这条警告说的事对我们**双重无关**：它讲的是数据同意界面在 Android 140–141 上
+不显示，而 (a) 我们不支持 Android，(b) 我们声明的是 `["none"]`，
+那里本来没有要同意的东西。
+
+所以桌面那条（140）清掉了，这条留着。**看到它不是回归。**
 
 ### 构建目标跟着一起改
 

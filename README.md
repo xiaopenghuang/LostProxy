@@ -173,9 +173,11 @@ npm run build      # 产出 dist/（Edge / Chrome）与 dist-firefox/
 - 上游代理需要用户名密码认证的情形未实现。
 - 企业 / 校园 Policy 控制代理设置时无法开启 —— 扩展优先级低于 Policy。
 - 与其他代理扩展冲突时**拒绝开启**并说明是谁在控制，不强行覆盖。
-- **不支持 Firefox for Android**，manifest 里明确排除了 —— `proxy.settings`
-  在那上面根本没实现（Bugzilla 1725981），装上去唯一的功能就是报错。
-  让它装不上比让它装上后必然失败要诚实（[细节](DESIGN.md#版本下限与-android-排除)）。
+- **不支持 Firefox for Android** —— `proxy.settings` 在那上面根本没实现
+  （Bugzilla 1725981），本扩展所有的代理写入都走它。AMO 上没有把它标成
+  Android 兼容，但**没有任何 manifest 键能阻止在 Android 上安装** ——
+  真装了的话开关会报「proxy.settings is not supported on android」
+  （[细节](DESIGN.md#版本下限与-android)）。
 - QUIC / HTTP3 是否绕过代理、InPrivate 窗口的实际出口 IP，**均未实测** ——
   是已知的待验项，不是已知的保证。
 

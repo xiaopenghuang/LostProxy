@@ -193,11 +193,11 @@ and other non-obvious parts, are in [DESIGN.md](DESIGN.md#building).
   extensions rank below policy.
 - When another proxy extension holds the setting it **refuses to start** and says
   which one, rather than taking over.
-- **Firefox for Android is not supported** and the manifest excludes it —
-  `proxy.settings` does not exist there (Bugzilla 1725981), so installing it
-  would give you a browser where the one thing it does throws. Failing to install
-  is more honest than installing and then failing
-  ([details](DESIGN.md#版本下限与-android-排除)).
+- **Firefox for Android is not supported** — `proxy.settings` does not exist there
+  (Bugzilla 1725981) and every proxy write here goes through it. AMO does not list
+  it as Android-compatible, but **no manifest key can prevent installation on
+  Android**; if you force it, the toggle reports "proxy.settings is not supported
+  on android" ([details](DESIGN.md#版本下限与-android)).
 - Whether QUIC / HTTP3 bypasses the proxy, and the real egress IP of private
   windows, are **untested** — known open questions, not known guarantees.
 

@@ -10,23 +10,10 @@ Each version section below is extracted by `.github/workflows/release.yml` and b
 
 ## v0.4.1
 
-修 Firefox 打包层面的三个问题。**扩展的功能一行没改** —— 变的是它声明自己
-在哪些浏览器上能装，以及设置页显示的版本号。
-Three packaging-level fixes for Firefox. **No functional change** — what changed is
-which browsers it declares itself installable on, and the version the settings page shows.
+打包层面的两处修复。**扩展的功能一行没改。**
+Two packaging-level fixes. **No functional change.**
 
 ### 修复 / Fixed
-
-- 🔴 **不再装进 Firefox for Android。** `proxy.settings` 在 Android 上**根本没实现**
-  （[Bugzilla 1725981](https://bugzilla.mozilla.org/show_bug.cgi?id=1725981) 至今开着），
-  而本扩展所有的代理写入都走它。而 v0.4.0 的 manifest 没有拦住这件事：
-  只声明了 `gecko.strict_min_version`，Android 于是**继承桌面的下限**并被 AMO
-  标成兼容 —— 用户装上得到一个开关点不动的扩展。
-
-  现在用 `gecko_android.strict_min_version` 明确排除。让一个平台装不上，
-  比让它装上后必然失败要诚实。
-  **No longer installs on Firefox for Android**, where `proxy.settings` does not exist.
-  v0.4.0 let it install into a browser whose only function throws.
 
 - 🔴 **设置页显示错的版本号。** `index.html` 里硬编码着 `v0.2.0`，所以从 V0.3 起
   一直显示错的 —— 穿过两次发布都没人发现。改成运行时从 manifest 读，
@@ -35,7 +22,7 @@ which browsers it declares itself installable on, and the version the settings p
   **The settings page showed the wrong version** — hardcoded since V0.3. It now reads
   the manifest at runtime.
 
-- **`strict_min_version` 128 → 140**，清掉 `addons-linter` 那两条警告。
+- **`strict_min_version` 128 → 140**，清掉 `addons-linter` 关于桌面版的那条警告。
   `data_collection_permissions` 是必需的（Mozilla 自 2025-11-03 起要求），
   而它只在 Firefox 140+ 被支持，低于 140 时会被静默忽略。
 
@@ -45,11 +32,19 @@ which browsers it declares itself installable on, and the version the settings p
   Raised to 140, the first version supporting `data_collection_permissions`.
   ESR 128 reached EOL in September 2025, so the range being dropped is empty.
 
+  ⚠️ 关于 Android 的那条警告**留着**，清它只有两条路而两条都不该走：
+  声明 `gecko_android` 等于**谎称支持 Android**（`proxy.settings` 在那上面
+  不存在），而把下限抬到 142 会排除 **ESR 140** —— 当前 ESR，
+  校园网正是 ESR 用户最集中的场景。详见 `DESIGN.md`。
+  The Android warning stays: clearing it would mean either claiming Android support
+  that does not exist, or dropping ESR 140.
+
 ### 内部 / Internals
 
-- 四道新闸门，各自反向验证过：构建目标必须与 manifest 下限对齐（两个文件里的
-  同一个数字）、Android 必须被明确排除、`data_collection_permissions` 必须存在
-  且下限支持它、界面 HTML 里不许出现版本号字面量。
+- 三道新闸门，各自反向验证过：构建目标必须与 manifest 下限对齐（两个文件里的
+  同一个数字）、**不得声明 `gecko_android`**（声明它等于宣称支持 Android）、
+  `data_collection_permissions` 必须存在且下限支持它。
+  外加一条：界面 HTML 里不许出现版本号字面量。
 - README 从 389 行瘦到 201 行，论证移进新增的 `DESIGN.md` ——
   原先它读起来像设计报告而不是介绍。
 - 新增 `npm run sign:firefox`：提交 AMO 签名并取回可长期安装的 `.xpi`。

@@ -406,24 +406,44 @@ describe('🔴🔴 构建产物里不得混入另一个平台的代码', () => {
     expect(read(resolve(ROOT, 'vite.shared.ts'))).toContain(`'firefox${major}'`)
   })
 
-  it('🔴🔴 Android 必须被明确排除', () => {
+  it('🔴🔴 不得声明 gecko_android —— 那等于宣称支持 Android', () => {
     /*
      * `proxy.settings` 在 Firefox for Android 上根本没实现
-     * （Bugzilla 1725981），而本扩展所有的代理写入都走它。
+     * （Bugzilla 1725981），而本扩展所有的代理写入都走它。所以绝不能
+     * 宣称支持 Android。
      *
-     * 不声明 `gecko_android` 的话 Android **继承桌面的下限**，
-     * 于是 AMO 把它标成兼容 —— 用户装上得到一个开关点不动的扩展。
-     * 这个状态在 v0.4.0 上真的发布出去过。
+     * 🔴 而**声明 `gecko_android` 恰恰就是宣称支持**。Extension Workshop 原话：
      *
-     * 判据是"下限高得不可能满足"，而不是某个具体数字 ——
-     * 将来若真做了 Android 支持，改的应该是这条测试所表达的意图，
-     * 而不是悄悄把哨兵值调低。
+     *   > To signal to AMO that your extension is compatible with Android,
+     *   > include, at least, an empty `gecko_android` object. If you don't,
+     *   > AMO assumes that the extension is **not** compatible with Android.
+     *
+     * 此方一度把方向搞反了：读到 MDN 里 `strict_min_version` 那句
+     * "If not provided, defaults to the version determined by
+     * gecko.strict_min_version"，就以为"不写会继承桌面下限并被标成兼容"。
+     * 那句话讲的是**已经写了 `gecko_android` 时版本号怎么定**，
+     * 不是"没写会怎样"。
+     *
+     * 于是此方加了个 `gecko_android: {strict_min_version: "999.0"}`
+     * 想"排除 Android"，而那实际上是在**打开** Android 支持 ——
+     * AMO 以 "Unknown strict_min_version 999.0 for Firefox for Android"
+     * 拒了它，恰好拦住了这个 bug。
+     *
+     * 已核实：v0.4.0（不含此键）在 AMO 上的兼容性记录是
+     * `{"firefox":{"min":"128.0","max":"*"}}` —— 没有 android 那一项。
+     *
+     * ⚠️ 顺带记住一件做不到的事：**没有任何 manifest 键能阻止 Android 安装。**
+     *    Extension Workshop：「Omitting gecko_android does not affect Firefox
+     *    for Android's ability to install the extension.」
+     *    真在 Android 上装了的话，`proxy.settings.set()` 会抛，
+     *    而 `enableProxy` 会把那句原文报给用户 —— 不好看，但诚实。
      */
     const manifest = JSON.parse(read(resolve(ROOT, 'src', 'manifest.firefox.json')))
-    const android = manifest.browser_specific_settings?.gecko_android
 
-    expect(android, 'gecko_android 缺失 —— Android 会继承桌面下限并被标成兼容').toBeDefined()
-    expect(Number.parseInt(android.strict_min_version, 10)).toBeGreaterThan(500)
+    expect(
+      manifest.browser_specific_settings?.gecko_android,
+      'gecko_android 存在 —— 那是在向 AMO 宣称支持 Android，而 proxy.settings 在那上面不存在',
+    ).toBeUndefined()
   })
 
   it('data_collection_permissions 存在，且下限支持它', () => {
