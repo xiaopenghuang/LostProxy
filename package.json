@@ -12,6 +12,7 @@
     "build:chromium": "vite build && vite build --config vite.config.sw.ts",
     "build:firefox": "vite build --config vite.config.firefox.ts && vite build --config vite.config.firefox.sw.ts",
     "package": "npm run build && node scripts/package.mjs",
+    "sign:firefox": "node scripts/sign-firefox.mjs",
     "watch": "vite build --watch",
     "watch:sw": "vite build --config vite.config.sw.ts --watch",
     "typecheck": "tsc --noEmit",

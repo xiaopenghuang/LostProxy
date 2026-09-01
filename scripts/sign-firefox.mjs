@@ -1,0 +1,271 @@
+/**
+ * 把 Firefox 版提交给 AMO 签名，取回可长期安装的 .xpi。
+ *
+ * ## 为什么需要这一步
+ *
+ * Firefox 的 Release 与 Beta **一律强制扩展签名，没有开关**（自 Firefox 48
+ * 起那个 preference 被移除）。`about:debugging` 那条路是临时的，重启即失效。
+ * 所以要长期装，只有两条路：让 Mozilla 签，或者换用 Developer Edition /
+ * Nightly / ESR 并关掉 `xpinstall.signatures.required`。
+ *
+ * 后者是**整个 profile 全局生效**的 —— 此后任何未签名扩展都能装进去。
+ * 对一个以"不静默泄漏"为卖点的代理工具来说，为了装它而把浏览器的扩展
+ * 签名防线整个关掉，方向是反的。所以走签名。
+ *
+ * ## unlisted：签名但不公开上架
+ *
+ * `--channel unlisted` 拿回一个签好的 .xpi，可在普通 Firefox 上从文件安装，
+ * 但**不出现在 AMO 的公开列表里**。适合"自己用 / 小范围用"。
+ *
+ * ⚠️ 它仍然走 Mozilla 的正式流程：要签 Add-on Distribution Agreement，
+ *    代码随时可能被人工复审。这不是"私下签个名"。
+ *
+ * ## 为什么调 web-ext 而不自己写 AMO 客户端
+ *
+ * 手写是可行的 —— JWT 是 HS256，用 node 内置 crypto 十几行；上传是 multipart，
+ * node 18+ 原生有 FormData。但 AMO 的文档开头明写着：
+ *
+ *   > These APIs are not frozen and can change at any time without warning.
+ *
+ * 把发布能力押在一个会随时变的 API 上，坏掉的时机正是你要发版的时候。
+ * `web-ext` 是 Mozilla 自己维护、跟着那些变动走的工具。
+ *
+ * 更决定性的一点：此方**没法测**一个手写的客户端 —— 那需要真的 AMO 凭据。
+ * 交出去一份没跑过的网络代码，比多一个工具依赖糟得多。
+ *
+ * ## 为什么不把 web-ext 写进 devDependencies
+ *
+ * 它带 324 个传递依赖（含 `@devicefarmer/adbkit` 这种安卓调试桥），
+ * 而签名是维护者一年用几次的动作，**CI 从不需要它**。
+ * 写进 package.json 会让每次 `npm ci`（包括 CI 的每一次）都多装那 324 个包。
+ *
+ * 所以用 `npx --yes web-ext@<钉死的版本>` 按需拉取。版本钉在本文件里，
+ * 所以仍然是可复现的 —— 而不是 `npx web-ext` 那种"每次拿最新"。
+ *
+ * ## 凭据
+ *
+ * 从环境变量读，**绝不落盘、绝不进 git**：
+ *   AMO_API_KEY     JWT issuer，形如 user:12345:67
+ *   AMO_API_SECRET  JWT secret
+ *
+ * 到 https://addons.mozilla.org/developers/addon/api/key/ 生成。
+ * 放进 `.env`（已在 .gitignore 里）然后 `set -a; . ./.env; set +a`，
+ * 或者临时 export。本脚本**不打印**它们的值，出错时也只说"缺哪个"。
+ *
+ * ## 用法
+ *
+ *   npm run sign:firefox
+ */
+
+import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+
+const ROOT = resolve(import.meta.dirname, '..')
+const OUT_DIR = resolve(ROOT, 'release')
+const DIST = resolve(ROOT, 'dist-firefox')
+
+/**
+ * 钉死的 web-ext 版本。
+ *
+ * 刻意不用 `latest`：签名是发布路径，而发布路径上的"每次拿最新"意味着
+ * 一次上游变更就能让发版失败，且失败点在别人的代码里。
+ * 升级它应当是一次显式的、有人看着的改动。
+ */
+const WEB_EXT_VERSION = '10.6.0'
+
+function fail(message) {
+  console.error(`\n✗ ${message}\n`)
+  process.exit(1)
+}
+
+/* ---------- 前置检查 ---------- */
+
+const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8'))
+const version = pkg.version
+
+if (!existsSync(resolve(DIST, 'manifest.json'))) {
+  fail('dist-firefox/ 里没有 manifest.json —— 先跑 npm run build')
+}
+
+const manifest = JSON.parse(readFileSync(resolve(DIST, 'manifest.json'), 'utf8'))
+
+if (manifest.version !== version) {
+  fail(`版本号不一致：manifest=${manifest.version} package.json=${version}`)
+}
+
+/*
+ * add-on ID 是签名的硬前提。
+ *
+ * 没有它 AMO 无法把这次提交与既有条目关联，而更隐蔽的后果是
+ * 后续更新会被当成一个**新扩展**，用户装上的那份永远收不到更新。
+ */
+const addonId = manifest.browser_specific_settings?.gecko?.id
+if (typeof addonId !== 'string' || addonId.length === 0) {
+  fail('manifest.firefox.json 缺 browser_specific_settings.gecko.id，AMO 签名必须有它')
+}
+
+/*
+ * `proxy` 权限的最低版本要求（Mozilla 2021 年那次 proxy API 滥用事件之后加的）。
+ *
+ * addons-linter 会因为这一条直接拒收，而它的报错文本
+ * （"requires strict_min_version to be set to 91.1.0 or above"）
+ * 在提交前就该被拦住 —— 上传一次再被拒是白等一轮。
+ */
+const minVersion = manifest.browser_specific_settings?.gecko?.strict_min_version
+if (manifest.permissions?.includes('proxy') === true) {
+  const major = Number.parseFloat(minVersion ?? '0')
+  if (!Number.isFinite(major) || major < 91.1) {
+    fail(`用了 proxy 权限，strict_min_version 必须 ≥ 91.1，当前是 ${minVersion ?? '（未设置）'}`)
+  }
+}
+
+const apiKey = process.env.AMO_API_KEY
+const apiSecret = process.env.AMO_API_SECRET
+
+const missing = [
+  apiKey ? null : 'AMO_API_KEY',
+  apiSecret ? null : 'AMO_API_SECRET',
+].filter((v) => v !== null)
+
+if (missing.length > 0) {
+  // 只说缺哪个，不回显任何已有值。
+  fail(
+    `缺环境变量：${missing.join(', ')}\n\n` +
+      '  到 https://addons.mozilla.org/developers/addon/api/key/ 生成，然后：\n' +
+      '    set -a; . ./.env; set +a\n' +
+      '  （.env 已在 .gitignore 里。别把它提交上去，也别贴给任何人。）',
+  )
+}
+
+/* ---------- 源码包 ---------- */
+
+/**
+ * 生成给审核员的源码包。
+ *
+ * 🔴 **这一步不是可选的。** Mozilla 明文要求：用了 bundler 或 minifier
+ *    就必须附源码，而审核员会**重跑你的构建并逐字节 diff**
+ *    ——「There must be no differences」。我们的 background.js 是 Vite
+ *    打包压缩的，正好落在这条里。
+ *
+ * 用 `git archive` 而不是自己遍历目录，理由有三：
+ *
+ *   1. 它**只含已跟踪文件**，所以 `docs/`（维护者的私有设计笔记）与
+ *      `.env`（凭据）被 .gitignore 自动排除 —— 不依赖此方在这里
+ *      手写一份排除清单，而漏一项的后果是把凭据寄给 Mozilla。
+ *   2. 产物精确对应一个 git ref，"提交的源码"与"仓库状态"之间没有缝。
+ *   3. 顺带拦住"拿未提交的改动去签名"—— 那样审核员 diff 出来必然不一致。
+ *
+ * ⚠️ 因此**未提交的改动不会进源码包**。这是刻意的，见第 3 条。
+ */
+function buildSourceArchive() {
+  const name = `lostproxy-source-v${version}.zip`
+  const outPath = resolve(OUT_DIR, name)
+
+  mkdirSync(OUT_DIR, { recursive: true })
+
+  let dirty = ''
+  try {
+    dirty = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' }).trim()
+  } catch {
+    fail('这里不像一个 git 仓库 —— 源码包靠 git archive 生成')
+  }
+
+  if (dirty.length > 0) {
+    fail(
+      '工作区有未提交的改动，源码包会漏掉它们，而审核员 diff 时必然报不一致。\n\n' +
+        '  先提交（或 stash），再签名。当前改动：\n' +
+        dirty
+          .split('\n')
+          .map((l) => `    ${l}`)
+          .join('\n'),
+    )
+  }
+
+  if (!existsSync(resolve(ROOT, 'REVIEWERS.md'))) {
+    fail('缺 REVIEWERS.md —— 那是给审核员的构建说明，没有它这次提交会被退回补材料')
+  }
+
+  execFileSync('git', ['archive', '--format=zip', '-o', outPath, 'HEAD'], { cwd: ROOT })
+
+  const sha = createHash('sha256').update(readFileSync(outPath)).digest('hex')
+  return { name, outPath, sha, size: statSync(outPath).size }
+}
+
+/* ---------- 主流程 ---------- */
+
+/*
+ * LICENSE 放进 dist-firefox/。
+ *
+ * 发布用的 zip 由 scripts/package.mjs 生成，它会额外塞一个 LICENSE
+ * （MIT 要求许可证随所有副本分发）。而 web-ext 只打 `--source-dir`
+ * 里的东西 —— 不复制的话，签出来的 xpi 会比发布的 zip 少这个文件。
+ *
+ * 两份产物内容不一致本身就是个隐患：它让"发布的 zip"与"签名的 xpi"
+ * 不再能互相印证，而 REVIEWERS.md 里给审核员的复现步骤也会对不上。
+ */
+copyFileSync(resolve(ROOT, 'LICENSE'), resolve(DIST, 'LICENSE'))
+
+const source = buildSourceArchive()
+
+const distFiles = readdirSync(DIST, { recursive: true, withFileTypes: true }).filter((e) =>
+  e.isFile(),
+)
+
+console.log(`\nLostProxy v${version} → AMO（unlisted）`)
+console.log(`  add-on id        ${addonId}`)
+console.log(`  strict_min       ${minVersion}`)
+console.log(`  待签目录          dist-firefox/  (${distFiles.length} 个文件)`)
+console.log(`  源码包            ${source.name}  ${source.size} bytes`)
+console.log(`  源码包 sha256     ${source.sha}`)
+console.log('\n把源码包一并上传 —— background.js 是打包压缩过的，AMO 要求附源码。\n')
+
+/*
+ * 交给 web-ext。
+ *
+ * ⚠️ 凭据经**环境变量**传给子进程，不进命令行参数。
+ *    命令行是全局可见的（ps / 任务管理器 / shell history），
+ *    而这两个值等于"能以你的身份向 AMO 提交任何东西"。
+ *    web-ext 认 WEB_EXT_API_KEY / WEB_EXT_API_SECRET 这两个环境变量。
+ */
+const args = [
+  '--yes',
+  `web-ext@${WEB_EXT_VERSION}`,
+  'sign',
+  '--source-dir',
+  DIST,
+  '--artifacts-dir',
+  OUT_DIR,
+  '--channel',
+  'unlisted',
+  '--upload-source-code',
+  source.outPath,
+]
+
+try {
+  execFileSync('npx', args, {
+    cwd: ROOT,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      WEB_EXT_API_KEY: apiKey,
+      WEB_EXT_API_SECRET: apiSecret,
+    },
+  })
+} catch {
+  /*
+   * web-ext 自己会把 AMO 的报错打出来（addons-linter 的校验结果、
+   * 审核状态等），这里不再包一层 —— 复述只会把有用的原文推到屏幕外。
+   *
+   * 常见的两类：
+   *   - 校验失败 → 按它列出的项改，重跑
+   *   - 等待审核超时 → 提交已经在 AMO 那边了，别重传（会撞版本号已存在），
+   *     去 https://addons.mozilla.org/developers/ 看状态并下载
+   */
+  fail('签名未完成。若是等待审核超时，提交已在 AMO 那边，去开发者面板下载，别重传。')
+}
+
+console.log(`\n✓ 签好的 .xpi 在 release/ 里。`)
+console.log('  安装：Firefox → about:addons → 齿轮 → 从文件安装附加组件')
+console.log('  这份是签过名的，普通 Firefox 也能长期装，重启不会掉。\n')
