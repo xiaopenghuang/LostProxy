@@ -1,0 +1,35 @@
+# 行尾符在仓库里钉死为 LF。
+#
+# 🔴 这不是风格偏好，是一条正确性约束。
+#
+# AMO 审核会**重建源码并与提交的包逐字节 diff**，Mozilla 的要求是
+# 「There must be no differences」。而在没有本文件时，行尾符取决于
+# 每台机器的 git 配置：
+#
+#   - 本仓库的本地 config 设了 `core.autocrlf=true`（Windows 开发机）
+#   - 于是 `git archive` 导出的源码包是 **CRLF**
+#   - 而工作区构建出的产物是 **LF**
+#   - 审核员解开那个包、构建，得到 CRLF —— 与我们提交的 LF 产物不一致
+#
+# 症状是 4 个文件 diff 出差异（LICENSE、manifest.json、两个 HTML ——
+# 都是**复制而非生成**的文件；生成的 JS/CSS 由 Vite 写出，一直是 LF），
+# 内容看起来完全相同，只有行尾符不同。提交会被退回，而报错信息
+# 不会告诉你问题出在行尾符上。
+#
+# 此方是在"扮演一次审核员"、真的从源码包重建并 diff 时撞到的 ——
+# 单靠读文档不会发现。
+#
+# 声明 `eol=lf` 之后这件事不再依赖任何机器的配置：checkout、commit、
+# archive 三处都是 LF，Windows 与 Linux 得到同一份字节。
+#
+# 当前仓库里存的本来就是 LF，所以这条规则不产生任何改动 —— 纯修复。
+* text=auto eol=lf
+
+# 二进制文件不做任何行尾转换。
+#
+# `text=auto` 自己会探测，但显式声明更稳：一次误判会静默损坏图标，
+# 而症状是"装上去图标是空白"—— 一个下载完才发现的失败。
+*.png binary
+*.ico binary
+*.zip binary
+*.xpi binary
