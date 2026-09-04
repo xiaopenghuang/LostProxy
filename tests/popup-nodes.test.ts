@@ -73,6 +73,7 @@ function group(overrides: Partial<GroupView> = {}): GroupView {
     now: 'HK-01',
     nodes: ['HK-01', 'JP-02'],
     latency: {},
+    protocol: {},
     ...overrides,
   }
 }
@@ -124,7 +125,7 @@ function openNodesTab(): void {
   document.querySelector<HTMLButtonElement>('#tab-nodes')?.click()
 }
 
-/** 各节点的名字。V0.3 起按钮里还有延迟徽章，所以要取 .node-name。 */
+/** 各节点的名字。按钮里还有协议与延迟徽章，所以要取 .node-name。 */
 function nodeNames(): (string | null)[] {
   return [...document.querySelectorAll<HTMLElement>('.node-item .node-name')].map(
     (n) => n.textContent,
@@ -469,6 +470,73 @@ describe('V0.3 延迟徽章', () => {
     await vi.waitFor(() => {
       expect(sent.some((m) => m.type === 'TEST_LATENCY')).toBe(true)
     })
+  })
+})
+
+describe('V0.7 协议徽章', () => {
+  it('shows the abbreviated protocol next to each node', async () => {
+    nextSnapshot = snapshot({
+      group: group({ protocol: { 'HK-01': 'Vless', 'JP-02': 'Hysteria2' } }),
+    })
+    await mountPopup()
+
+    const badges = [...document.querySelectorAll<HTMLElement>('.protocol')]
+    expect(badges.map((b) => b.textContent)).toEqual(['VLESS', 'HY2'])
+  })
+
+  it('🔴 falls back to the core’s own wording for a protocol it does not know', async () => {
+    /*
+     * 内核每加一个协议都会出现一个新 type。把缩写表当白名单用会让新协议
+     * **静默消失** —— 显示 `Brand-New` 比显示空白有用，哪怕没缩写。
+     */
+    nextSnapshot = snapshot({
+      group: group({ protocol: { 'HK-01': 'Mieru', 'JP-02': 'Brand-New' } }),
+    })
+    await mountPopup()
+
+    const badges = [...document.querySelectorAll<HTMLElement>('.protocol')]
+    expect(badges.map((b) => b.textContent)).toEqual(['Mieru', 'Brand-New'])
+  })
+
+  it('🔴 keeps the column occupied when a member has no protocol', async () => {
+    /*
+     * 嵌套的策略组与内置出口没有协议。少渲染一个元素会让那一行的延迟徽章
+     * 挪到 grid 的前一列，于是整列数字失去对齐 —— 所以空徽章也必须存在。
+     */
+    nextSnapshot = snapshot({
+      group: group({
+        protocol: { 'HK-01': 'Vless', 'JP-02': '' },
+        latency: { 'HK-01': 42, 'JP-02': 88 },
+      }),
+    })
+    await mountPopup()
+
+    const badges = [...document.querySelectorAll<HTMLElement>('.protocol')]
+    expect(badges).toHaveLength(2)
+    expect(badges[1]?.textContent).toBe('')
+    // 空徽章不能被 display:none 掉，否则占不住列位。
+    openNodesTab()
+    expect(getComputedStyle(badges[1]!).display).not.toBe('none')
+  })
+
+  it('renders an empty badge rather than crashing when the map has no entry', async () => {
+    // 内核不可达时协议字典是空的，节点列表本身仍要正常渲染。
+    nextSnapshot = snapshot({ group: group({ protocol: {} }) })
+    await mountPopup()
+
+    const badges = [...document.querySelectorAll<HTMLElement>('.protocol')]
+    expect(badges.map((b) => b.textContent)).toEqual(['', ''])
+    expect(nodeNames()).toEqual(['HK-01', 'JP-02'])
+  })
+
+  it('treats the protocol as text, never as markup', async () => {
+    // 内核响应同样按不可信输入处理（脏响应的同一条纪律）。
+    nextSnapshot = snapshot({
+      group: group({ protocol: { 'HK-01': '<img src=x onerror=alert(1)>' } }),
+    })
+    await mountPopup()
+
+    expect(document.querySelector('#node-list img')).toBeNull()
   })
 })
 

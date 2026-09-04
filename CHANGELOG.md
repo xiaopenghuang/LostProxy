@@ -8,6 +8,33 @@ Each version section below is extracted by `.github/workflows/release.yml` and b
 
 ---
 
+## v0.5.0
+
+节点列表现在标注每个节点的协议。数据本来就在已有的响应里，所以不多发一个请求。
+The node list now labels each node's protocol, at no added network cost.
+
+### 新增 / New
+
+- **节点列表标注协议**（`VLESS` / `HY2` / `Trojan` / `SS` …）。机场常给同一地区的节点
+  起近乎相同的名字（`…|SAK-1` 一路到 `…|SAK-8`），光看名字分不出协议，
+  而协议决定它在受干扰网络下的表现。
+  **Each node now shows its protocol.** Providers often name same-region nodes almost
+  identically, which left the protocol invisible.
+
+- **不额外发请求。** 协议取自 `/proxies` 响应里每个节点自带的 `type` 字段，而那份响应
+  扩展本来就在请求（为了读延迟用的 `history`）。现在同一份响应解析一遍喂给两个抽取
+  函数，请求数不变 —— 与 ADR-32「延迟显示不触发测速」同一条理由。
+  **Zero added network cost** — `type` comes from the same `/proxies` response already
+  fetched for latency.
+
+- 缩写表**不是白名单**：表里没有的协议显示内核原文。内核每加一个协议都会出现一个新
+  `type`，当白名单用会让新协议**静默消失** —— 显示一个没缩写的名字比显示空白有用。
+  嵌套的策略组与内置出口（`DIRECT` / `REJECT`）不显示徽章，但仍占住那一列，
+  否则那一行的延迟会挪到前一列、整列数字失去对齐。
+  Unknown protocols fall back to the core's own wording rather than vanishing.
+
+---
+
 ## v0.4.2
 
 打包层面的两处修复。**扩展的功能一行没改。**

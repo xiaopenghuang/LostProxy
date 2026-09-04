@@ -689,7 +689,7 @@ body {
 /* 节点行 */
 .node-item {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -750,6 +750,29 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* V0.7 协议徽章 —— 比延迟徽章更淡，它是分类信息而不是需要比较的数值 */
+.protocol {
+  padding: 1.5px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg-tertiary);
+  background: var(--control-bg);
+  white-space: nowrap;
+}
+
+/*
+ * 嵌套的策略组与内核内置出口没有协议，此时 span 是空的。
+ *
+ * 刻意不用 display:none —— 它要继续占住 grid 的第二列，否则那一行的
+ * 延迟徽章会挪到前一列，整列数字失去对齐。这里只是把外壳去掉。
+ */
+.protocol:empty {
+  padding: 0;
+  background: none;
 }
 
 /* V0.3 延迟徽章 Pill */

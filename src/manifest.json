@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LostProxy",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Browser-scoped proxy. Routes only this browser through your local Mihomo core. Does not modify Windows system proxy, TUN or routes.",
   "minimum_chrome_version": "120",
   "permissions": [

@@ -13,12 +13,17 @@
  * ⚠️ 与 index.ts 同样受 ADR-08 约束：禁止在模块作用域持有可变状态。
  */
 
-import { ALERT_STALE_AFTER_MS, CONTROLLER_PORT_CANDIDATES } from '../shared/constants'
+import {
+  ALERT_STALE_AFTER_MS,
+  CONTROLLER_PORT_CANDIDATES,
+  NON_PROTOCOL_TYPES,
+} from '../shared/constants'
 import { errors, isSelfHealing } from '../shared/errors'
 import type { Request, Response, ResponsePayloads } from '../shared/messages'
 import type {
   CoreStatus,
   GroupView,
+  NodeMeta,
   NormalizedError,
   ProxyGroup,
   Settings,
@@ -26,7 +31,7 @@ import type {
 } from '../shared/types'
 import {
   getGroups,
-  getLatencies,
+  getNodeMeta,
   getProviders,
   getVersion,
   probeControllerPort,
@@ -153,7 +158,7 @@ export function pickError(
 function resolveGroup(
   settings: Settings,
   groups: readonly ProxyGroup[],
-  latency: Readonly<Record<string, number | null>>,
+  meta: NodeMeta,
 ): readonly [GroupView | null, NormalizedError | null] {
   if (settings.primaryGroup.length === 0) return [null, errors.groupNotConfigured()]
 
@@ -162,14 +167,33 @@ function resolveGroup(
   const found = groups.find((g) => g.name === settings.primaryGroup)
   if (found === undefined) return [null, errors.groupNotFound(settings.primaryGroup)]
 
-  // 只保留该组成员的延迟，不把整个内核的 proxy 字典塞进快照。
+  // 只保留该组成员的延迟与协议，不把整个内核的 proxy 字典塞进快照。
   const scoped: Record<string, number | null> = {}
+  const protocol: Record<string, string> = {}
+
+  /*
+   * 成员名出现在组列表里 ⇒ 那是个**嵌套的策略组**，不是节点，没有协议可显示。
+   *
+   * 这个判据比按 type 名排除更可靠：内核将来新增组类型时它自动跟上，
+   * 而 `NON_PROTOCOL_TYPES` 主要兜的是内置出口（DIRECT / REJECT / COMPATIBLE），
+   * 那些不在组列表里，只能按 type 认。两条一起用，任一命中就不显示徽章。
+   */
+  const groupNames = new Set(groups.map((g) => g.name))
   for (const name of found.all) {
-    scoped[name] = latency[name] ?? null
+    scoped[name] = meta.latency[name] ?? null
+    const type = meta.protocol[name] ?? ''
+    protocol[name] = groupNames.has(name) || NON_PROTOCOL_TYPES.has(type) ? '' : type
   }
 
   return [
-    { name: found.name, type: found.type, now: found.now, nodes: found.all, latency: scoped },
+    {
+      name: found.name,
+      type: found.type,
+      now: found.now,
+      nodes: found.all,
+      latency: scoped,
+      protocol,
+    },
     null,
   ]
 }
@@ -183,18 +207,18 @@ export async function collectStatus(): Promise<StatusSnapshot> {
    * 六项探测互不依赖，并发跑省掉串行等待
    * （探活最坏要等 3 秒超时，串起来会让 Popup 明显卡顿）。
    *
-   * `getLatencies` 读的是内核 health-check 已有的 history，
+   * `getNodeMeta` 读的是内核 health-check 已有的 history 与各节点的 type，
    * **不触发任何测速**（ADR-32）。它失败时返回空字典而非错误 ——
-   * 延迟是装饰性信息，取不到应该表现为"没有延迟显示"，
+   * 延迟与协议都是装饰性信息，取不到应该表现为"不显示这两样"，
    * 而不该让整个节点列表变成错误页。
    */
-  const [inspection, probe, webRtc, persisted, groupsResult, latency] = await Promise.all([
+  const [inspection, probe, webRtc, persisted, groupsResult, nodeMeta] = await Promise.all([
     inspectProxy(settings),
     getVersion(settings),
     inspectWebRtcPolicy(),
     getLastError(),
     getGroups(settings),
-    getLatencies(settings),
+    getNodeMeta(settings),
   ])
 
   /*
@@ -203,7 +227,7 @@ export async function collectStatus(): Promise<StatusSnapshot> {
    * PROXY_LEAK_SUSPECTED —— 用不重要的信息盖掉最重要的信息。
    */
   const [group, groupError] = groupsResult.ok
-    ? resolveGroup(settings, groupsResult.groups, latency)
+    ? resolveGroup(settings, groupsResult.groups, nodeMeta)
     : ([null, groupsResult.error] as const)
 
   return {

@@ -83,6 +83,64 @@ export const LATENCY_FAST_MS = 200
 export const LATENCY_MEDIUM_MS = 500
 
 /**
+ * 协议名的展示缩写（V0.7）。
+ *
+ * 数据来自 `/proxies` 里每个节点自带的 `type` 字段 —— 那份响应扩展**本来就在请求**
+ * （为了取延迟），所以显示协议不产生任何额外网络行为，理由与 ADR-32 同一条。
+ *
+ * 键是内核给的原文（Go 侧 `adapter.Type.String()`，首字母大写）；
+ * 值取社区通用写法：协议缩写全大写，产品名保留驼峰。
+ *
+ * ⚠️ **这不是白名单。** 表里没有的 type 显示原文，见 `popup.ts` 的 `protocolBadge`。
+ *    内核每加一个协议都会出现一个新 type，当白名单用会让新协议**静默不显示** ——
+ *    显示 `Mieru` 比显示空白有用，哪怕没缩写。
+ */
+export const PROTOCOL_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  Vless: 'VLESS',
+  Vmess: 'VMess',
+  Trojan: 'Trojan',
+  Shadowsocks: 'SS',
+  ShadowsocksR: 'SSR',
+  Hysteria: 'HY',
+  Hysteria2: 'HY2',
+  Tuic: 'TUIC',
+  Snell: 'Snell',
+  WireGuard: 'WG',
+  Socks5: 'SOCKS5',
+  Http: 'HTTP',
+  Ssh: 'SSH',
+  Mieru: 'Mieru',
+  AnyTLS: 'AnyTLS',
+})
+
+/**
+ * 不算协议的 `type` 值 —— 这些成员不显示协议徽章。
+ *
+ * 两类，都会合法地出现在成员位置上：
+ *   - **策略组**（`Selector` / `URLTest` / …）：组可以嵌套。
+ *   - **内置出口**（`DIRECT` / `REJECT` / `COMPATIBLE` / …）：内核内建的行为，不是协议。
+ *
+ * 之所以与 `PROTOCOL_LABELS` 分成两张表而不是只留白名单：两者的兜底方向**相反** ——
+ * 未知协议要显示原文，未知组类型要不显示。所以必须是「排除表 + 兜底显示」。
+ * 组还有一层更可靠的判据（成员名是否出现在组列表里），见 `orchestrator.ts`；
+ * 这张表主要兜的是内置出口，它们不在组列表里。
+ */
+export const NON_PROTOCOL_TYPES: ReadonlySet<string> = new Set([
+  'Selector',
+  'URLTest',
+  'Fallback',
+  'LoadBalance',
+  'Relay',
+  'Direct',
+  'Reject',
+  'RejectDrop',
+  'Compatible',
+  'Pass',
+  'PassRule',
+  'Dns',
+])
+
+/**
  * Controller 端口探测的候选列表。
  *
  * 🔴 这是一个**白名单**，不是一个扫描范围。

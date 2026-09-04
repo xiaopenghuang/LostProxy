@@ -357,6 +357,30 @@ export interface GroupView {
    * 用 `null` 而不是 `0`：`0` 会被渲染成"0ms"，看起来像极快。
    */
   latency: Readonly<Record<string, number | null>>
+  /**
+   * 各节点的协议原文（V0.7）：`Vless` / `Hysteria2` / `Trojan` …
+   *
+   * 与 `latency` 同源 —— 都出自 `/proxies` 的同一份响应，不额外发请求。
+   * 这里存内核原文，缩写（`Vless` → `VLESS`）留给展示层。
+   *
+   * 空字符串表示**明确不该显示徽章**：该成员是嵌套的策略组或内核内置出口，
+   * 两者都没有"协议"可言。用 `''` 而不是省掉这个键 —— 省掉的键无法与
+   * 「读不到」区分，而这两种情形的正确渲染不同（前者留空位，后者也留空位，
+   * 但将来若要区分就没有余地了）。
+   */
+  protocol: Readonly<Record<string, string>>
+}
+
+/**
+ * `GET /proxies` 里本项目用得到的部分（V0.7）。
+ *
+ * 一次请求两用：延迟取自 `history`，协议取自 `type`。分成两个字段而不是
+ * 两次请求 —— 那份响应是全部 proxy 的字典，一份大订阅几百条，
+ * 为了两个字段拉两遍毫无必要。
+ */
+export interface NodeMeta {
+  latency: Readonly<Record<string, number | null>>
+  protocol: Readonly<Record<string, string>>
 }
 
 /**

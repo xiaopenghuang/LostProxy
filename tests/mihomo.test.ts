@@ -12,7 +12,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   buildHeaders,
   controllerBaseUrl,
+  extractProtocols,
   getGroups,
+  getNodeMeta,
   getProviders,
   getVersion,
   probeControllerPort,
@@ -697,5 +699,105 @@ describe('updateProvider', () => {
     if (result.ok) return
     expect(result.error.code).toBe('SUBS_UPDATE_FAILED')
     expect(result.error.message).toContain('Airport')
+  })
+})
+
+describe('extractProtocols（V0.7）', () => {
+  it('reads the type of every proxy', () => {
+    const out = extractProtocols({
+      proxies: {
+        'JP-01': { type: 'Vless' },
+        'HK-02': { type: 'Hysteria2' },
+      },
+    })
+
+    expect(out).toEqual({ 'JP-01': 'Vless', 'HK-02': 'Hysteria2' })
+  })
+
+  it('🔴 keeps the core wording verbatim instead of abbreviating here', () => {
+    /*
+     * 缩写是展示偏好（PROTOCOL_LABELS，popup 用）。在这一层缩写会让
+     * 「内核说了什么」与「我们决定怎么显示」混成一件事，
+     * 将来想在别处按原始 type 判断就没有依据了。
+     */
+    const out = extractProtocols({ proxies: { A: { type: 'Shadowsocks' } } })
+
+    expect(out['A']).toBe('Shadowsocks')
+  })
+
+  it('passes group types through — filtering them needs the group list', () => {
+    // 判断某个成员是不是嵌套的组要知道全部组名，那是 orchestrator 的信息。
+    const out = extractProtocols({ proxies: { 节点选择: { type: 'Selector' } } })
+
+    expect(out['节点选择']).toBe('Selector')
+  })
+
+  it('skips dirty entries rather than failing the whole map', () => {
+    const out = extractProtocols({
+      proxies: {
+        ok: { type: 'Trojan' },
+        missing: {},
+        wrongType: { type: 42 },
+        empty: { type: '' },
+        notAnObject: 'nope',
+        nulled: null,
+      },
+    })
+
+    expect(out).toEqual({ ok: 'Trojan' })
+  })
+
+  it.each([null, undefined, 42, 'text', {}, { proxies: null }, { proxies: 'x' }])(
+    'returns an empty map for a malformed payload (%s)',
+    (payload) => {
+      expect(extractProtocols(payload)).toEqual({})
+    },
+  )
+})
+
+describe('getNodeMeta（V0.7）', () => {
+  it('🔴 gets latency and protocol out of a single request', async () => {
+    /*
+     * 两者同源。为两个字段拉两遍那份几百条的字典毫无必要 ——
+     * 这条断言就是"零额外网络开销"这个说法的凭据（ADR-32）。
+     */
+    stubFetch(() =>
+      jsonResponse({
+        proxies: {
+          'JP-01': { type: 'Vless', history: [{ delay: 88 }] },
+          'HK-02': { type: 'Hysteria2', history: [] },
+        },
+      }),
+    )
+
+    const meta = await getNodeMeta(settings)
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.url).toBe('http://127.0.0.1:9090/proxies')
+    expect(meta.latency).toEqual({ 'JP-01': 88 })
+    expect(meta.protocol).toEqual({ 'JP-01': 'Vless', 'HK-02': 'Hysteria2' })
+  })
+
+  it('degrades to empty maps instead of throwing when the core is unreachable', async () => {
+    // 延迟与协议都是装饰性信息，取不到不该让整个节点列表变成错误页。
+    stubFetch(() => Promise.reject(new Error('ECONNREFUSED')))
+
+    await expect(getNodeMeta(settings)).resolves.toEqual({ latency: {}, protocol: {} })
+  })
+
+  it('degrades to empty maps on a non-OK response', async () => {
+    stubFetch(() => jsonResponse({}, 401))
+
+    await expect(getNodeMeta(settings)).resolves.toEqual({ latency: {}, protocol: {} })
+  })
+
+  it('🔴 sends the secret in a header, never in the URL', async () => {
+    stubFetch(() => jsonResponse({ proxies: {} }))
+
+    await getNodeMeta(withSecret)
+
+    expect(calls[0]?.url).not.toContain(SECRET)
+    const headers = calls[0]?.init?.headers as Record<string, string> | undefined
+    expect(headers?.['Authorization']).toBe(`Bearer ${SECRET}`)
   })
 })

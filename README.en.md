@@ -39,7 +39,8 @@ those, and the extension only decides which traffic goes through the proxy.
 ## Features
 
 - Proxy toggle, scoped to the current browser
-- Node switching and latency testing without opening a Clash client
+- Node switching, latency testing and per-node protocol labels (VLESS / HY2 …),
+  without opening a Clash client
 - Rule-based routing with a configurable direct-connect host list
 - Subscription refresh
 - Locks WebRTC in step, so UDP cannot bypass the HTTP proxy and expose the

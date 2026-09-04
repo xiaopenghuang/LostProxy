@@ -64,12 +64,14 @@ let fetchedUrls: string[] = []
  *   组永远是 CORE_BAD_RESPONSE。那样的桩不像真内核，
  *   它会让真 bug 通过测试。
  */
-function stubCore(groups: readonly unknown[] = []): void {
+function stubCore(groups: readonly unknown[] = [], proxies: Record<string, unknown> = {}): void {
   vi.stubGlobal('fetch', (input: string | URL | Request) => {
     const url = typeof input === 'string' ? input : input.toString()
     fetchedUrls.push(url)
     if (url.endsWith('/version')) return Promise.resolve(json({ meta: true, version: 'v1.19.0' }))
     if (url.endsWith('/group')) return Promise.resolve(json({ proxies: groups }))
+    // GET /proxies —— 延迟与协议同源。靠路径末尾与下面的 PUT 区分。
+    if (url.endsWith('/proxies')) return Promise.resolve(json({ proxies }))
     // PUT /proxies/{name}
     return Promise.resolve(new Response(null, { status: 204 }))
   })
@@ -878,6 +880,75 @@ describe('collectStatus · 策略组', () => {
       // V0.3：延迟从 /proxies 的 history 读取。这个桩没提供 history，
       // 所以两个节点都是 null —— null 而非 0，因为 0 会被渲染成"0ms"。
       latency: { 'HK-01': null, 'HK-02': null },
+      // V0.7：协议从同一份 /proxies 响应的 type 读取。桩里没有 type，
+      // 于是两个都是空串 = 不显示徽章，而非缺键。
+      protocol: { 'HK-01': '', 'HK-02': '' },
+    })
+  })
+
+  it('carries each member’s protocol into the view（V0.7）', async () => {
+    stubCore([selectorGroup], {
+      'HK-01': { type: 'Vless', history: [{ delay: 52 }] },
+      'HK-02': { type: 'Hysteria2' },
+    })
+    await withGroupConfigured()
+
+    const snapshot = await collectStatus()
+
+    expect(snapshot.group?.protocol).toEqual({ 'HK-01': 'Vless', 'HK-02': 'Hysteria2' })
+    // 同一份 /proxies 响应同时给出了延迟 —— 这就是"零额外请求"的含义。
+    expect(snapshot.group?.latency['HK-01']).toBe(52)
+  })
+
+  it('scopes the protocol map to this group’s members', async () => {
+    // 不把整个内核的 proxy 字典塞进快照 —— 一份大订阅有几百条。
+    stubCore([selectorGroup], {
+      'HK-01': { type: 'Vless' },
+      'HK-02': { type: 'Vless' },
+      '别的组的节点': { type: 'Trojan' },
+    })
+    await withGroupConfigured()
+
+    const snapshot = await collectStatus()
+
+    expect(Object.keys(snapshot.group?.protocol ?? {})).toEqual(['HK-01', 'HK-02'])
+  })
+
+  it('🔴 leaves nested groups and built-in outbounds without a protocol', async () => {
+    /*
+     * 成员位置上出现策略组是正常的（组可嵌套），DIRECT / REJECT 也一样。
+     * 两者都没有"协议"可言，给它们标上 URLTest / Direct 是错的。
+     *
+     * `新组` 那一项是两条判据的分界：它的 type 不在 NON_PROTOCOL_TYPES 里，
+     * 只能靠"成员名出现在组列表里"认出来 —— 内核将来新增组类型时正是这条兜住。
+     */
+    stubCore(
+      [
+        {
+          name: GROUP,
+          type: 'Selector',
+          now: 'HK-01',
+          all: ['HK-01', '自动选择', 'DIRECT', '新组'],
+        },
+        { name: '自动选择', type: 'URLTest', now: 'HK-01', all: ['HK-01'] },
+        { name: '新组', type: 'BrandNewGroupKind', now: 'HK-01', all: ['HK-01'] },
+      ],
+      {
+        'HK-01': { type: 'Vless' },
+        '自动选择': { type: 'URLTest' },
+        DIRECT: { type: 'Direct' },
+        '新组': { type: 'BrandNewGroupKind' },
+      },
+    )
+    await withGroupConfigured()
+
+    const snapshot = await collectStatus()
+
+    expect(snapshot.group?.protocol).toEqual({
+      'HK-01': 'Vless',
+      '自动选择': '',
+      DIRECT: '',
+      '新组': '',
     })
   })
 

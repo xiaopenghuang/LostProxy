@@ -14,7 +14,7 @@
  * 第一次 GET_STATUS 回来才能确定语言，静态文案也在那之后才填充。
  */
 
-import { LATENCY_FAST_MS, LATENCY_MEDIUM_MS } from '../shared/constants'
+import { LATENCY_FAST_MS, LATENCY_MEDIUM_MS, PROTOCOL_LABELS } from '../shared/constants'
 import { isLeakSuspected } from '../shared/errors'
 import { createTranslator, resolveLocale, type MessageKey } from '../shared/i18n'
 import { sendMessage } from '../shared/messages'
@@ -208,13 +208,17 @@ function renderNodes(snapshot: StatusSnapshot): void {
     button.dataset.node = name
 
     /*
-     * 名字与延迟各占一个 span。
+     * 名字、协议、延迟各占一个 span。
      * textContent 而非 innerHTML：节点名来自订阅，是不可信输入。
      */
     const label = document.createElement('span')
     label.className = 'node-name'
     label.textContent = name
-    button.append(label, latencyBadge(snapshot.group.latency[name] ?? null))
+    button.append(
+      label,
+      protocolBadge(snapshot.group.protocol[name] ?? ''),
+      latencyBadge(snapshot.group.latency[name] ?? null),
+    )
 
     if (name === snapshot.group.now) {
       button.setAttribute('aria-current', 'true')
@@ -229,6 +233,23 @@ function renderNodes(snapshot: StatusSnapshot): void {
   // ADR-28：能切换时必须显示边界说明。
   nodesScope.hidden = false
   if (testLatency) testLatency.hidden = false
+}
+
+/**
+ * 渲染协议徽章（V0.7）。
+ *
+ * 缩写表里没有的 type **显示原文**而不是留空 —— 内核每加一个协议都会出现一个
+ * 新 type，当白名单用会让新协议静默消失。显示 `Mieru` 比显示空白有用。
+ *
+ * 没有协议时（嵌套的策略组、内核内置出口）返回的仍是一个 span，只是内容为空，
+ * **不是** null：grid 的列宽按整列最宽项算，少一个元素会让那一行的延迟徽章
+ * 挪到前一列，于是整列数字失去对齐。空 span 宽度为 0，但把列位占住了。
+ */
+function protocolBadge(protocol: string): HTMLElement {
+  const span = document.createElement('span')
+  span.className = 'protocol'
+  span.textContent = protocol.length === 0 ? '' : (PROTOCOL_LABELS[protocol] ?? protocol)
+  return span
 }
 
 /**

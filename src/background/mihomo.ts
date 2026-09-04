@@ -21,6 +21,7 @@ import type {
   ApplyResult,
   GroupsResult,
   MihomoVersion,
+  NodeMeta,
   NormalizedError,
   ProviderView,
   ProxyGroup,
@@ -208,6 +209,34 @@ export function extractLatency(payload: unknown): Record<string, number | null> 
 }
 
 /**
+ * 从 `/proxies` 响应里抽取每个节点的协议（V0.7）。
+ *
+ * 读的是 `extractLatency` 用的**同一份响应** —— `type` 字段本来就在每个 proxy
+ * 对象里，所以显示协议是零额外网络开销（ADR-32 的同一条理由）。
+ *
+ * 如实转录内核原文（`Vless` / `Hysteria2`），**不在这里缩写**：
+ * 缩写表是展示偏好，属于 popup。这一层只负责"内核说了什么"。
+ *
+ * 也**不在这里过滤**策略组与内置出口 —— 判断某个成员是不是嵌套的组
+ * 需要知道全部组名，那是 orchestrator 才有的信息。
+ */
+export function extractProtocols(payload: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (typeof payload !== 'object' || payload === null) return out
+
+  const proxies = (payload as Record<string, unknown>)['proxies']
+  if (typeof proxies !== 'object' || proxies === null) return out
+
+  for (const [name, raw] of Object.entries(proxies as Record<string, unknown>)) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const type = (raw as Record<string, unknown>)['type']
+    if (typeof type === 'string' && type.length > 0) out[name] = type
+  }
+
+  return out
+}
+
+/**
  * `GET /group` —— 拉取全部策略组。
  *
  * 用 `/group` 而不是 `/proxies`：后者返回**所有** proxy（含每一个节点），
@@ -315,26 +344,31 @@ export async function selectNode(
 }
 
 /**
- * `GET /proxies` —— 只为取 history 里的延迟（V0.3）。
+ * `GET /proxies` —— 取每个节点的延迟与协议（V0.3 / V0.7）。
  *
- * 为什么不复用 `/group`：组对象的 `all` 只有成员**名字**，没有各成员的 history。
- * 延迟数据在 `/proxies` 里（那是全部 proxy 的字典）。两个端点各取所需：
- * `/group` 拿结构，`/proxies` 拿延迟。
+ * 为什么不复用 `/group`：组对象的 `all` 只有成员**名字**，既没有各成员的
+ * `history`（延迟）也没有 `type`（协议）。两个端点各取所需：
+ * `/group` 拿结构，`/proxies` 拿这两样。
  *
- * 失败时返回空字典而非错误 —— 延迟是**装饰性信息**，取不到应该表现为
- * "没有延迟显示"，不该让整个节点列表变成一个错误页。
+ * 一次请求两用 —— 响应解析一遍喂给两个抽取函数。为两个字段拉两遍
+ * 这份几百条的字典毫无必要。
+ *
+ * 失败时返回两个空字典而非错误 —— 延迟与协议都是**装饰性信息**，
+ * 取不到应该表现为"不显示这两样"，不该让整个节点列表变成一个错误页。
  */
-export async function getLatencies(settings: Settings): Promise<Record<string, number | null>> {
+export async function getNodeMeta(settings: Settings): Promise<NodeMeta> {
   try {
     const response = await fetch(`${controllerBaseUrl(settings)}/proxies`, {
       method: 'GET',
       headers: buildHeaders(settings.controllerSecret),
       signal: AbortSignal.timeout(CORE_PROBE_TIMEOUT_MS),
     })
-    if (!response.ok) return {}
-    return extractLatency(await response.json())
+    if (!response.ok) return { latency: {}, protocol: {} }
+
+    const payload: unknown = await response.json()
+    return { latency: extractLatency(payload), protocol: extractProtocols(payload) }
   } catch {
-    return {}
+    return { latency: {}, protocol: {} }
   }
 }
 
