@@ -602,6 +602,13 @@ body {
   min-height: 24px;
 }
 
+/* 「选最快」与「测速」两个 mini-btn 并排 */
+.nodes-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
 .nodes-group {
   min-width: 0;
   overflow: hidden;
@@ -809,6 +816,157 @@ body {
 
 /* ADR-28 要求的边界披露 */
 .nodes-scope {
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--stroke);
+  color: var(--fg-secondary);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+/* V0.8 实时吞吐（状态标签） */
+.traffic {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-control);
+  background: var(--control-bg);
+}
+
+.traffic-rates {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 6px;
+}
+
+.traffic-rate {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.traffic-arrow {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.traffic-rate[data-dir='down'] {
+  color: var(--accent);
+}
+
+.traffic-rate[data-dir='up'] {
+  color: var(--fg-secondary);
+}
+
+/* 迷你速率曲线。高度固定、宽度撑满，viewBox 用固定坐标系（见 buildSparkline）。 */
+.spark {
+  display: block;
+  width: 100%;
+  height: 32px;
+}
+
+.spark-line {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke; /* preserveAspectRatio=none 会拉伸描边，这个抵消它 */
+}
+
+.spark-line[data-dir='down'] {
+  stroke: var(--accent);
+}
+
+.spark-line[data-dir='up'] {
+  stroke: var(--fg-tertiary);
+}
+
+.traffic-total {
+  display: block;
+  margin-top: 6px;
+  color: var(--fg-tertiary);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* V0.8 实时连接 */
+.conns-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.conns-count {
+  color: var(--fg-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.conns-hint {
+  margin: 4px 0;
+  color: var(--fg-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.conns-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.conn-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: 'host via' 'meta meta';
+  gap: 2px 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-control);
+}
+
+.conn-host {
+  grid-area: host;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conn-via {
+  grid-area: via;
+  overflow: hidden;
+  max-width: 120px;
+  color: var(--accent);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 直连连接是「防泄漏」视角下最该被一眼看到的东西 —— 用告警色标出 */
+.conn-via[data-direct='true'] {
+  color: var(--warn);
+  font-weight: 650;
+}
+
+.conn-meta {
+  grid-area: meta;
+  color: var(--fg-tertiary);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.conns-scope {
   margin: 10px 0 0;
   padding-top: 8px;
   border-top: 1px solid var(--stroke);

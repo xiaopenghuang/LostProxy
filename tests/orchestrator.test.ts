@@ -22,9 +22,11 @@ import {
   handleDismissError,
   handleEnable,
   handleGetStatus,
+  handleListConnections,
   handleMessage,
   handleSaveSettings,
   handleTestCore,
+  handleToggle,
   pickError,
   reconcile,
 } from '../src/background/orchestrator'
@@ -70,6 +72,7 @@ function stubCore(groups: readonly unknown[] = [], proxies: Record<string, unkno
     fetchedUrls.push(url)
     if (url.endsWith('/version')) return Promise.resolve(json({ meta: true, version: 'v1.19.0' }))
     if (url.endsWith('/group')) return Promise.resolve(json({ proxies: groups }))
+    if (url.endsWith('/connections')) return Promise.resolve(json({ connections: [], uploadTotal: 0, downloadTotal: 0 }))
     // GET /proxies —— 延迟与协议同源。靠路径末尾与下面的 PUT 区分。
     if (url.endsWith('/proxies')) return Promise.resolve(json({ proxies }))
     // PUT /proxies/{name}
@@ -1128,5 +1131,83 @@ describe('handleListGroups', () => {
     const result = await handleMessage({ type: 'LIST_GROUPS' })
 
     expect(JSON.stringify(result)).not.toContain(SECRET)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// V0.8 实时连接
+// ---------------------------------------------------------------------------
+
+describe('handleListConnections（V0.8）', () => {
+  it('returns normalized connections and totals from the core', async () => {
+    vi.stubGlobal('fetch', (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.endsWith('/connections')) {
+        return Promise.resolve(
+          json({
+            connections: [
+              { id: 'a', metadata: { host: 'a.com' }, chains: ['N', 'G'], rule: 'Match', upload: 3, download: 4 },
+            ],
+            uploadTotal: 30,
+            downloadTotal: 40,
+          }),
+        )
+      }
+      return Promise.resolve(json({}))
+    })
+
+    const res = await handleListConnections()
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(res.data.connections).toHaveLength(1)
+    expect(res.data.connections[0]?.host).toBe('a.com')
+    expect(res.data.uploadTotal).toBe(30)
+    expect(res.data.downloadTotal).toBe(40)
+  })
+
+  it('passes the core error through when the controller is unreachable', async () => {
+    stubCoreOffline()
+    const res = await handleListConnections()
+    expect(res.ok).toBe(false)
+    if (res.ok) return
+    expect(res.error.code).toBe('CORE_OFFLINE')
+  })
+
+  it('🔴 does not persist a read failure into lastError', async () => {
+    // 读连接失败是一次查询的失败，不是代理层安全事件；写进 lastError 会盖住
+    // 可能存在的泄漏告警（与 SELECT_NODE 同一条纪律）。
+    stubCoreOffline()
+    await handleListConnections()
+    expect(await getLastError()).toBeNull()
+  })
+})
+
+describe('handleToggle（V0.8）', () => {
+  it('enables when currently disabled', async () => {
+    stubCoreOnline()
+    await setEnabledState(false)
+
+    const res = await handleToggle()
+
+    expect(res.ok).toBe(true)
+    expect(await getEnabledState()).toBe(true)
+  })
+
+  it('disables when currently enabled', async () => {
+    stubCoreOnline()
+    await setEnabledState(true)
+
+    const res = await handleToggle()
+
+    expect(res.ok).toBe(true)
+    expect(await getEnabledState()).toBe(false)
+  })
+
+  it('routes through the same message handler', async () => {
+    stubCoreOnline()
+    await setEnabledState(false)
+    // handleToggle 不是消息类型，但走的是 handleEnable —— 确认它真的翻转了状态。
+    await handleToggle()
+    expect(await getEnabledState()).toBe(true)
   })
 })

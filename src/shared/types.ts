@@ -427,3 +427,53 @@ export type ApplyResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly error: NormalizedError }
 
+/**
+ * 一条活动连接的归一化视图（V0.8）。
+ *
+ * 只取渲染「此刻什么在走代理」所需的字段。内核的 `/connections` 每条还带
+ * `id`、`start`、`metadata` 里的一堆网络细节，UI 一概不用 —— 少读一个字段
+ * 就少一处将来因内核改动而失配的地方（与 `ProxyGroup` 同一条纪律）。
+ *
+ * 🔴 `host` / `chain` / `rule` 全部来自内核、间接来自访问的站点，是**不可信输入**，
+ *    渲染时只能用 textContent。
+ */
+export interface ConnectionView {
+  /** 稳定标识，用作列表 key；来自内核的连接 id。 */
+  id: string
+  /** 目标主机；内核没给 host 时回退到 `destinationIP`。 */
+  host: string
+  /**
+   * 出口链：从**实际出口**到策略组，例如 `["🇯🇵JP-1", "EXIT-B"]`。
+   * 空数组表示内核没给（脏条目已在解析层跳过，正常不会空）。
+   */
+  chain: readonly string[]
+  /** 命中的规则类型，如 `DOMAIN-SUFFIX` / `ProcessName` / `Match`。 */
+  rule: string
+  /** 这条连接的累计上/下行字节数。 */
+  upload: number
+  download: number
+  /**
+   * 是否直连出网。
+   *
+   * 判据是出口链里含 `DIRECT` —— 直连也会作为一条连接出现在 `/connections` 里，
+   * 而对一个「防泄漏」工具来说，让用户一眼看出**哪些流量没走代理**正是重点。
+   */
+  isDirect: boolean
+}
+
+/**
+ * `GET /connections` 的归一化结果（V0.8）。
+ *
+ * `uploadTotal` / `downloadTotal` 是内核自启动以来的累计值，直接透传 ——
+ * 它是内核维度而非本浏览器维度（与切节点同属「效果逸出浏览器」，ADR-28），
+ * UI 对此要有明示。
+ */
+export type ConnectionsResult =
+  | {
+      readonly ok: true
+      readonly connections: readonly ConnectionView[]
+      readonly uploadTotal: number
+      readonly downloadTotal: number
+    }
+  | { readonly ok: false; readonly error: NormalizedError }
+

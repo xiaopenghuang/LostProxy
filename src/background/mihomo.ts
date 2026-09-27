@@ -19,6 +19,8 @@ import {
 import { errors } from '../shared/errors'
 import type {
   ApplyResult,
+  ConnectionsResult,
+  ConnectionView,
   GroupsResult,
   MihomoVersion,
   NodeMeta,
@@ -370,6 +372,98 @@ export async function getNodeMeta(settings: Settings): Promise<NodeMeta> {
   } catch {
     return { latency: {}, protocol: {} }
   }
+}
+
+/**
+ * 把 `/connections` 里的一条原始连接归一化成 `ConnectionView`（V0.8）。
+ *
+ * 缺关键字段（没有可用的目标标识）就返回 null 由调用方跳过 —— 一条脏连接
+ * 不该让整份列表失败（与 `parseGroup` 同一条纪律）。
+ *
+ * `chains` 内核给的顺序是「实际出口 → …… → 策略组」，直接沿用。
+ * `host` 优先取 `metadata.host`，为空时回退到 `destinationIP` —— 直连 IP
+ * 的连接往往没有 host。
+ */
+export function parseConnection(raw: unknown): ConnectionView | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const c = raw as Record<string, unknown>
+
+  const id = typeof c['id'] === 'string' ? c['id'] : ''
+  if (id.length === 0) return null
+
+  const meta = (typeof c['metadata'] === 'object' && c['metadata'] !== null
+    ? c['metadata']
+    : {}) as Record<string, unknown>
+  const host = typeof meta['host'] === 'string' && meta['host'].length > 0 ? meta['host'] : ''
+  const destIP = typeof meta['destinationIP'] === 'string' ? meta['destinationIP'] : ''
+  const target = host.length > 0 ? host : destIP
+  if (target.length === 0) return null
+
+  const chain = Array.isArray(c['chains'])
+    ? c['chains'].filter((x): x is string => typeof x === 'string')
+    : []
+
+  const rule = typeof c['rule'] === 'string' ? c['rule'] : ''
+  const upload = typeof c['upload'] === 'number' ? c['upload'] : 0
+  const download = typeof c['download'] === 'number' ? c['download'] : 0
+
+  // 直连的判据是出口链里出现 DIRECT。内核对直连连接的 chains 就是 ["DIRECT"]。
+  const isDirect = chain.includes('DIRECT')
+
+  return { id, host: target, chain, rule, upload, download, isDirect }
+}
+
+/**
+ * `GET /connections` —— 列出内核当前的活动连接（V0.8）。
+ *
+ * 这是本项目第二个「效果逸出浏览器」的只读视图：`/connections` 反映的是
+ * **整个内核**在代理的连接，不限于本浏览器（ADR-28）。它的价值正在于此 ——
+ * 一个「防泄漏」工具应当让用户能亲眼看到此刻什么在走代理、什么在直连。
+ *
+ * 错误归一化复用 §22 的同一套映射，与 `getGroups` 一致。累计流量透传，
+ * 不做单位换算（那是展示层的事）。
+ */
+export async function getConnections(settings: Settings): Promise<ConnectionsResult> {
+  const url = `${controllerBaseUrl(settings)}/connections`
+
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'GET',
+      headers: buildHeaders(settings.controllerSecret),
+      signal: AbortSignal.timeout(CORE_PROBE_TIMEOUT_MS),
+    })
+  } catch {
+    return { ok: false, error: errors.coreOffline(settings.controllerHost, settings.controllerPort) }
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    return { ok: false, error: errors.coreAuthFailed() }
+  }
+  if (!response.ok) {
+    return { ok: false, error: errors.coreBadResponse() }
+  }
+
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    return { ok: false, error: errors.coreBadResponse() }
+  }
+  if (typeof payload !== 'object' || payload === null) {
+    return { ok: false, error: errors.coreBadResponse() }
+  }
+
+  const body = payload as Record<string, unknown>
+  const rawConns = Array.isArray(body['connections']) ? body['connections'] : []
+  const connections = rawConns
+    .map(parseConnection)
+    .filter((c): c is ConnectionView => c !== null)
+
+  const uploadTotal = typeof body['uploadTotal'] === 'number' ? body['uploadTotal'] : 0
+  const downloadTotal = typeof body['downloadTotal'] === 'number' ? body['downloadTotal'] : 0
+
+  return { ok: true, connections, uploadTotal, downloadTotal }
 }
 
 /**

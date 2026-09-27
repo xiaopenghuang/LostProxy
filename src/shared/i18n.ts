@@ -65,6 +65,7 @@ const EN = {
   // ---- 标签页 ----
   'popup.tabStatus': 'Status',
   'popup.tabNodes': 'Nodes',
+  'popup.tabConns': 'Live',
 
   // ---- V0.4 分流模式 ----
   'popup.routingLabel': 'Routing',
@@ -83,6 +84,7 @@ const EN = {
   'popup.latencyTesting': 'Testing…',
   'popup.latencyTimeout': 'timeout',
   'popup.latencyUntested': '—',
+  'popup.pickFastest': 'Fastest',
 
   // ---- V0.2 节点切换 ----
   'popup.nodeSectionLabel': 'Node',
@@ -103,6 +105,17 @@ const EN = {
    */
   'popup.nodeScopeNotice':
     'Switching a node changes the core itself, so anything else using this core is affected too — unlike the proxy toggle above, which only affects this browser.',
+
+  // ---- V0.8 实时连接 ----
+  'popup.connsRefresh': 'Refresh',
+  'popup.connsTotal': 'Total ↑{up} ↓{down}',
+  'popup.connsCount': '{n} connection(s)',
+  'popup.connsDirect': 'DIRECT',
+  'popup.connsEmpty': 'No active connections right now.',
+  'popup.connsNeedsController':
+    'Live connections need the Mihomo external controller. Enable it in your Mihomo client, then set the controller port in Settings.',
+  'popup.connsScopeNotice':
+    'These are every connection through the core, not just this browser — the same core-wide view as node switching. A DIRECT tag means that connection is not going through the proxy.',
 
   // ---- Options ----
   'options.title': 'LostProxy Settings',
@@ -327,6 +340,7 @@ const ZH: Record<MessageKey, string> = {
   // ---- 标签页 ----
   'popup.tabStatus': '状态',
   'popup.tabNodes': '节点',
+  'popup.tabConns': '实时',
 
   // ---- V0.4 分流模式 ----
   'popup.routingLabel': '分流',
@@ -344,6 +358,7 @@ const ZH: Record<MessageKey, string> = {
   'popup.latencyTesting': '测速中…',
   'popup.latencyTimeout': '超时',
   'popup.latencyUntested': '—',
+  'popup.pickFastest': '选最快',
 
   // ---- V0.2 节点切换 ----
   'popup.nodeSectionLabel': '节点',
@@ -359,6 +374,17 @@ const ZH: Record<MessageKey, string> = {
   'popup.nodeRetry': '重试',
   'popup.nodeScopeNotice':
     '切换节点改的是内核本身，所有在用这个内核的程序都会跟着变 —— 与上面那个只影响本浏览器的代理开关不同。',
+
+  // ---- V0.8 实时连接 ----
+  'popup.connsRefresh': '刷新',
+  'popup.connsTotal': '累计 ↑{up} ↓{down}',
+  'popup.connsCount': '{n} 条连接',
+  'popup.connsDirect': '直连',
+  'popup.connsEmpty': '当前没有活动连接。',
+  'popup.connsNeedsController':
+    '实时连接需要 Mihomo 的外部控制。在 Mihomo 客户端里开启，再到设置里填 Controller 端口。',
+  'popup.connsScopeNotice':
+    '这里是整个内核的全部连接，不只本浏览器 —— 与切节点同属内核维度。标着「直连」的那条表示它没走代理。',
 
   // ---- Options ----
   'options.title': 'LostProxy 设置',

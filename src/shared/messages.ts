@@ -12,6 +12,7 @@
  */
 
 import type {
+  ConnectionView,
   NormalizedError,
   ProviderView,
   ProxyGroup,
@@ -79,6 +80,16 @@ export type Request =
    * 逐个试一个由已知客户端默认值构成的**白名单**（不是扫描范围）。
    */
   | { readonly type: 'PROBE_PORT' }
+  /**
+   * V0.8：列出内核当前的活动连接。
+   *
+   * ⚠️ 与 SELECT_NODE 同属「逸出浏览器」的一类：返回的是**整个内核**的连接，
+   *    不限于本浏览器（ADR-28）。UI 必须对此有明示。
+   *
+   * 刻意是显式消息、且由 Popup 在「连接」标签打开时轮询，不放进 GET_STATUS ——
+   * 连接列表变化快，绑在每次开 Popup 上既无必要也会拖慢主状态。
+   */
+  | { readonly type: 'LIST_CONNECTIONS' }
 
 /** 消息类型字面量，便于运行时穷举校验。 */
 export type RequestType = Request['type']
@@ -112,6 +123,12 @@ export interface ResponsePayloads {
   UPDATE_PROVIDER: { providers: readonly ProviderView[] }
   /** 探到的端口；null 表示候选全部试过都没有。 */
   PROBE_PORT: { port: number | null }
+  /** V0.8：内核当前活动连接 + 累计流量。 */
+  LIST_CONNECTIONS: {
+    connections: readonly ConnectionView[]
+    uploadTotal: number
+    downloadTotal: number
+  }
 }
 
 /** 给定请求类型，推导出其响应类型。 */

@@ -38,6 +38,8 @@ let sent: { type: string; node?: string }[] = []
 let nextSnapshot: StatusSnapshot
 /** 让 SELECT_NODE 失败时用的错误；null 表示成功。 */
 let selectError: NormalizedError | null = null
+/** 下一次 LIST_CONNECTIONS 的响应（V0.8）。 */
+let nextConnections: unknown
 
 function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
   return {
@@ -85,6 +87,9 @@ function group(overrides: Partial<GroupView> = {}): GroupView {
  * 不注入的话 getComputedStyle 永远返回默认值，那条「[hidden] 被作者样式
  * 覆盖」的真 bug（ADR-26，真机上出现过一个空的橙色告警框）就测不出来。
  */
+/** 最近一次载入的 Popup 模块，用于 afterEach 停掉它的吞吐轮询。 */
+let popupModule: typeof import('../src/popup/popup') | null = null
+
 async function mountPopup(): Promise<void> {
   const html = readSrc('src/popup/index.html')
   document.documentElement.innerHTML = html
@@ -102,7 +107,7 @@ async function mountPopup(): Promise<void> {
   document.head.append(style)
 
   vi.resetModules()
-  await import('../src/popup/popup')
+  popupModule = await import('../src/popup/popup')
   // 顶层的 refresh() 是异步的，让它跑完再断言。
   await vi.waitFor(() => {
     expect(sent.some((m) => m.type === 'GET_STATUS')).toBe(true)
@@ -141,12 +146,16 @@ beforeEach(() => {
   sent = []
   selectError = null
   nextSnapshot = snapshot()
+  nextConnections = { ok: true, data: { connections: [], uploadTotal: 0, downloadTotal: 0 } }
 
   const runtime = {
     lastError: undefined,
     openOptionsPage: vi.fn(),
     sendMessage: (message: { type: string; node?: string }) => {
       sent.push(message)
+      if (message.type === 'LIST_CONNECTIONS') {
+        return Promise.resolve(nextConnections)
+      }
       if (message.type === 'SELECT_NODE' && selectError !== null) {
         return Promise.resolve({ ok: false, error: selectError })
       }
@@ -157,6 +166,10 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // 停掉吞吐轮询，否则它的 setTimeout 链会跨用例乱窜，把 LIST_CONNECTIONS
+  // 塞进别的用例的 sent 断言里。
+  popupModule?.stopTrafficPolling()
+  popupModule = null
   document.documentElement.innerHTML = ''
   vi.restoreAllMocks()
 })
@@ -540,6 +553,39 @@ describe('V0.7 协议徽章', () => {
   })
 })
 
+describe('V0.8 状态页显示当前节点', () => {
+  it('shows the selected node on the status tab', async () => {
+    nextSnapshot = snapshot({ group: group({ now: 'JP-02' }) })
+    await mountPopup()
+
+    expect(document.querySelector('#node-text')?.textContent).toBe('JP-02')
+  })
+
+  it('falls back to a dash when no group is resolved', async () => {
+    // 未配置 / 核心不可达 / 组不存在：group 为 null。
+    nextSnapshot = snapshot({ group: null, groupError: errors.groupNotConfigured() })
+    await mountPopup()
+
+    expect(document.querySelector('#node-text')?.textContent).toBe('—')
+  })
+
+  it('falls back to a dash for a group with no current node (LoadBalance)', async () => {
+    nextSnapshot = snapshot({ group: group({ now: null }) })
+    await mountPopup()
+
+    expect(document.querySelector('#node-text')?.textContent).toBe('—')
+  })
+
+  it('🔴 renders the node name as text, never as markup', async () => {
+    // now 来自内核、间接来自订阅，是不可信输入。
+    nextSnapshot = snapshot({ group: group({ now: '<img src=x onerror=alert(1)>' }) })
+    await mountPopup()
+
+    expect(document.querySelector('#node-text img')).toBeNull()
+    expect(document.querySelector('#node-text')?.textContent).toBe('<img src=x onerror=alert(1)>')
+  })
+})
+
 describe('V0.4 分流模式', () => {
   it('highlights the stored mode', async () => {
     nextSnapshot = snapshot({
@@ -603,3 +649,249 @@ describe('V0.4 分流模式', () => {
     expect(sent.some((m) => m.type === 'SAVE_SETTINGS')).toBe(false)
   })
 })
+
+describe('V0.8 节点列表按延迟排序', () => {
+  it('reorders the rendered list so the fastest node is first', async () => {
+    nextSnapshot = snapshot({
+      group: group({
+        nodes: ['slow', 'fast', 'mid'],
+        now: 'x',
+        latency: { slow: 400, fast: 50, mid: 200 },
+      }),
+    })
+    await mountPopup()
+
+    expect(nodeNames()).toEqual(['fast', 'mid', 'slow'])
+  })
+
+  it('leaves the order untouched before any latency is known', async () => {
+    nextSnapshot = snapshot({ group: group({ nodes: ['a', 'b', 'c'], now: 'x', latency: {} }) })
+    await mountPopup()
+
+    expect(nodeNames()).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('V0.8 选最快', () => {
+  it('tests, then switches to the lowest-latency node', async () => {
+    nextSnapshot = snapshot({
+      group: group({ nodes: ['a', 'b'], now: 'a', latency: { a: 300, b: 80 } }),
+    })
+    await mountPopup()
+    openNodesTab()
+
+    document.querySelector<HTMLButtonElement>('#pick-fastest')?.click()
+    await vi.waitFor(() => {
+      expect(sent.some((m) => m.type === 'SELECT_NODE')).toBe(true)
+    })
+
+    expect(sent.find((m) => m.type === 'SELECT_NODE')?.node).toBe('b')
+  })
+
+  it('🔴 does not switch when the fastest node is already selected', async () => {
+    nextSnapshot = snapshot({
+      group: group({ nodes: ['a', 'b'], now: 'b', latency: { a: 300, b: 80 } }),
+    })
+    await mountPopup()
+    openNodesTab()
+
+    document.querySelector<HTMLButtonElement>('#pick-fastest')?.click()
+    await vi.waitFor(() => {
+      expect(sent.some((m) => m.type === 'TEST_LATENCY')).toBe(true)
+    })
+    await Promise.resolve()
+
+    // 已经是最快，白切一次没意义。
+    expect(sent.some((m) => m.type === 'SELECT_NODE')).toBe(false)
+  })
+
+  it('hides the button when there is only one node', async () => {
+    nextSnapshot = snapshot({ group: group({ nodes: ['only'], now: 'only' }) })
+    await mountPopup()
+
+    expect(document.querySelector<HTMLElement>('#pick-fastest')?.hidden).toBe(true)
+  })
+})
+
+/**
+ * 强制走一次连接轮询：点隐藏的刷新按钮触发 pollConnections。
+ *
+ * 吞吐轮询在 mountPopup 时就以空数据跑了第一拍；用例要用自定义的 nextConnections
+ * 时，设好后点一次刷新即可立刻重渲染，不用等 2 秒的下一拍。
+ */
+async function forceConnPoll(): Promise<void> {
+  document.querySelector<HTMLButtonElement>('#conns-refresh')?.click()
+  await Promise.resolve()
+}
+
+describe('V0.8 实时连接标签', () => {
+  it('renders one row per connection with host and exit node', async () => {
+    nextSnapshot = snapshot({ group: group() })
+    await mountPopup()
+
+    nextConnections = {
+      ok: true,
+      data: {
+        connections: [
+          { id: '1', host: 'a.com', chain: ['JP-1', 'EXIT-B'], rule: 'Match', upload: 1024, download: 2048, isDirect: false },
+        ],
+        uploadTotal: 4096,
+        downloadTotal: 8192,
+      },
+    }
+    await forceConnPoll()
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('.conn-item')).toHaveLength(1)
+    })
+
+    expect(document.querySelector('.conn-host')?.textContent).toBe('a.com')
+    expect(document.querySelector('.conn-via')?.textContent).toBe('JP-1')
+  })
+
+  it('🔴 flags a DIRECT connection distinctly (leak-audit view)', async () => {
+    nextSnapshot = snapshot({ group: group() })
+    await mountPopup()
+
+    nextConnections = {
+      ok: true,
+      data: {
+        connections: [
+          { id: '1', host: 'intranet', chain: ['DIRECT'], rule: 'DOMAIN', upload: 0, download: 0, isDirect: true },
+        ],
+        uploadTotal: 0,
+        downloadTotal: 0,
+      },
+    }
+    await forceConnPoll()
+    await vi.waitFor(() => {
+      expect(document.querySelector('.conn-via')).not.toBeNull()
+    })
+
+    expect(document.querySelector<HTMLElement>('.conn-via')?.dataset.direct).toBe('true')
+  })
+
+  it('shows a hint instead of a list when there are no connections', async () => {
+    nextSnapshot = snapshot({ group: group() })
+    await mountPopup()
+
+    nextConnections = { ok: true, data: { connections: [], uploadTotal: 0, downloadTotal: 0 } }
+    await forceConnPoll()
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>('#conns-hint')?.hidden).toBe(false)
+    })
+    expect(document.querySelectorAll('.conn-item')).toHaveLength(0)
+  })
+
+  it('shows a controller hint when the connections read fails', async () => {
+    nextSnapshot = snapshot({ group: group() })
+    await mountPopup()
+
+    nextConnections = { ok: false, error: errors.coreOffline('127.0.0.1', 9097) }
+    await forceConnPoll()
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>('#conns-hint')?.hidden).toBe(false)
+    })
+    expect(document.querySelector('#conns-hint')?.textContent).toContain('controller')
+  })
+
+  it('🔴 treats host and chain as text, never as markup', async () => {
+    nextSnapshot = snapshot({ group: group() })
+    await mountPopup()
+
+    nextConnections = {
+      ok: true,
+      data: {
+        connections: [
+          { id: '1', host: '<img src=x onerror=alert(1)>', chain: ['x'], rule: 'X', upload: 0, download: 0, isDirect: false },
+        ],
+        uploadTotal: 0,
+        downloadTotal: 0,
+      },
+    }
+    await forceConnPoll()
+    await vi.waitFor(() => {
+      expect(document.querySelector('.conn-item')).not.toBeNull()
+    })
+
+    expect(document.querySelector('#conns-list img')).toBeNull()
+    expect(document.querySelector('.conn-host')?.textContent).toBe('<img src=x onerror=alert(1)>')
+  })
+})
+
+describe('V0.8 状态标签吞吐组件', () => {
+  it('shows the widget with a cumulative total once the core answers', async () => {
+    nextSnapshot = snapshot({ group: group() })
+    nextConnections = {
+      ok: true,
+      data: { connections: [], uploadTotal: 4096, downloadTotal: 8192 },
+    }
+    await mountPopup()
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>('#traffic')?.hidden).toBe(false)
+    })
+
+    // 累计流量应被格式化显示。
+    expect(document.querySelector('#traffic-total')?.textContent).toContain('KiB')
+  })
+
+  it('shows a dash for the rate on the first sample, a value after the second', async () => {
+    nextSnapshot = snapshot({ group: group() })
+    nextConnections = {
+      ok: true,
+      data: { connections: [], uploadTotal: 1_000_000, downloadTotal: 2_000_000 },
+    }
+    await mountPopup()
+    // 首拍没有上一样本 → 速率显示破折号。
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>('#traffic')?.hidden).toBe(false)
+    })
+    expect(document.querySelector('#traffic-down')?.textContent).toBe('—')
+
+    // 隔开一小段真实时间，保证第二拍与首拍的时间戳不同（否则 elapsed=0，速率算不出）。
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // 第二拍累计增长 → 算出速率，不再是破折号。
+    nextConnections = {
+      ok: true,
+      data: { connections: [], uploadTotal: 1_500_000, downloadTotal: 3_000_000 },
+    }
+    await forceConnPoll()
+    await vi.waitFor(() => {
+      expect(document.querySelector('#traffic-down')?.textContent).not.toBe('—')
+    })
+    expect(document.querySelector('#traffic-down')?.textContent).toContain('/s')
+  })
+
+  it('draws the sparkline once there are at least two samples', async () => {
+    nextSnapshot = snapshot({ group: group() })
+    nextConnections = {
+      ok: true,
+      data: { connections: [], uploadTotal: 100, downloadTotal: 100 },
+    }
+    await mountPopup()
+
+    nextConnections = {
+      ok: true,
+      data: { connections: [], uploadTotal: 200, downloadTotal: 999 },
+    }
+    await forceConnPoll()
+    await vi.waitFor(() => {
+      const pts = document.querySelector('#spark-down')?.getAttribute('points') ?? ''
+      expect(pts.length).toBeGreaterThan(0)
+    })
+  })
+
+  it('🔴 hides the widget when the core is unreachable', async () => {
+    // 状态标签已有 Core 状态行解释原因，吞吐组件再报一次错只是噪音。
+    nextSnapshot = snapshot({ group: group() })
+    nextConnections = { ok: false, error: errors.coreOffline('127.0.0.1', 9097) }
+    await mountPopup()
+    await vi.waitFor(() => {
+      expect(sent.some((m) => m.type === 'LIST_CONNECTIONS')).toBe(true)
+    })
+
+    expect(document.querySelector<HTMLElement>('#traffic')?.hidden).toBe(true)
+  })
+})
+
+

@@ -210,6 +210,23 @@ export const LOOPBACK_HOSTS: readonly string[] = Object.freeze([
 /** Controller 探活超时。3 秒足够本机回环，再长只是让 UI 干等。 */
 export const CORE_PROBE_TIMEOUT_MS = 3000
 
+/**
+ * 「连接」标签打开时的轮询间隔（V0.8）。
+ *
+ * 2 秒：连接列表要够「实时」才有观察价值，但 `/connections` 是本机回环上的
+ * 快照请求，2 秒一次的开销可忽略。只在该标签可见时轮询（见 popup.ts），
+ * 不在后台常跑。
+ */
+export const CONNS_POLL_MS = 2000
+
+/**
+ * 状态标签里迷你速率曲线保留的采样点数（V0.8）。
+ *
+ * 30 点 × 2 秒 ≈ 最近一分钟的趋势。曲线是「刚才网速大致怎么走的」的即时观感，
+ * 不是完整历史，所以固定窗口、旧点丢弃就够了。
+ */
+export const SPARK_POINTS = 30
+
 
 /**
  * 瞬时告警在自愈前必须"静默"多久。

@@ -30,6 +30,7 @@ import type {
   StatusSnapshot,
 } from '../shared/types'
 import {
+  getConnections,
   getGroups,
   getNodeMeta,
   getProviders,
@@ -366,6 +367,19 @@ export async function handleDisable(): Promise<Response<StatusSnapshot>> {
 }
 
 /**
+ * 翻转代理开关（V0.8）。供键盘快捷键使用。
+ *
+ * 以**当前落盘的开关状态**为准决定方向，而不是维护任何本地标志 ——
+ * 快捷键可能在 Popup 没开、SW 刚被唤醒时触发，此时唯一可信的状态在 storage 里
+ * （ADR-08：SW 不在模块作用域持有可变状态）。复用 handleEnable / handleDisable，
+ * fail-closed 顺序与回滚逻辑一条都不重写。
+ */
+export async function handleToggle(): Promise<Response<StatusSnapshot>> {
+  const enabled = await getEnabledState()
+  return enabled ? handleDisable() : handleEnable()
+}
+
+/**
  * 保存设置。
  *
  * ⚠️ 极易漏掉的一步：代理正开着时改了 host/port，必须**用新设置重新写入**，
@@ -582,6 +596,31 @@ export async function handleTestCore(): Promise<Response<ResponsePayloads['TEST_
     : { ok: false, error: probe.error }
 }
 
+/**
+ * V0.8：列出内核当前活动连接。
+ *
+ * 与 LIST_GROUPS 同样是只读查询，错误原样透传给发起的 UI。
+ * 不写 lastError —— 读连接失败是一次查询的失败，不是代理层安全事件，
+ * 写进去会盖住可能存在的泄漏告警（与 SELECT_NODE 同一条纪律）。
+ */
+export async function handleListConnections(): Promise<
+  Response<ResponsePayloads['LIST_CONNECTIONS']>
+> {
+  const settings = await getSettings()
+  const result = await getConnections(settings)
+
+  return result.ok
+    ? {
+        ok: true,
+        data: {
+          connections: result.connections,
+          uploadTotal: result.uploadTotal,
+          downloadTotal: result.downloadTotal,
+        },
+      }
+    : { ok: false, error: result.error }
+}
+
 /** 消息路由。未知消息一律拒绝，不静默忽略。 */
 export async function handleMessage(message: unknown): Promise<Response<unknown>> {
   if (typeof message !== 'object' || message === null || !('type' in message)) {
@@ -616,6 +655,8 @@ export async function handleMessage(message: unknown): Promise<Response<unknown>
         return await handleUpdateProvider(request.name)
       case 'PROBE_PORT':
         return await handleProbePort()
+      case 'LIST_CONNECTIONS':
+        return await handleListConnections()
       default: {
         // 穷举检查：新增消息类型时忘了处理，这里会编译失败。
         const exhaustive: never = request

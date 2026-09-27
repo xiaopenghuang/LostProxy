@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LostProxy",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Browser-scoped proxy. Routes only this browser through your local Mihomo core. Does not modify Windows system proxy, TUN or routes.",
   "minimum_chrome_version": "120",
   "permissions": [
@@ -32,5 +32,13 @@
   "options_ui": {
     "page": "options/index.html",
     "open_in_tab": true
+  },
+  "commands": {
+    "toggle-proxy": {
+      "suggested_key": {
+        "default": "Alt+Shift+L"
+      },
+      "description": "Toggle LostProxy for this browser"
+    }
   }
 }

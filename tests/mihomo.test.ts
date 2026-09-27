@@ -13,10 +13,12 @@ import {
   buildHeaders,
   controllerBaseUrl,
   extractProtocols,
+  getConnections,
   getGroups,
   getNodeMeta,
   getProviders,
   getVersion,
+  parseConnection,
   probeControllerPort,
   selectNode,
   updateProvider,
@@ -799,5 +801,153 @@ describe('getNodeMeta（V0.7）', () => {
     expect(calls[0]?.url).not.toContain(SECRET)
     const headers = calls[0]?.init?.headers as Record<string, string> | undefined
     expect(headers?.['Authorization']).toBe(`Bearer ${SECRET}`)
+  })
+})
+
+// ===========================================================================
+// V0.8 实时连接
+// ===========================================================================
+
+describe('parseConnection（V0.8）', () => {
+  const base = {
+    id: 'c1',
+    metadata: { host: 'example.com', destinationIP: '1.2.3.4' },
+    chains: ['JP-1', 'EXIT-B'],
+    rule: 'DOMAIN-SUFFIX',
+    upload: 100,
+    download: 200,
+  }
+
+  it('normalizes a well-formed connection', () => {
+    expect(parseConnection(base)).toEqual({
+      id: 'c1',
+      host: 'example.com',
+      chain: ['JP-1', 'EXIT-B'],
+      rule: 'DOMAIN-SUFFIX',
+      upload: 100,
+      download: 200,
+      isDirect: false,
+    })
+  })
+
+  it('falls back to destinationIP when host is empty', () => {
+    const c = parseConnection({ ...base, metadata: { host: '', destinationIP: '9.9.9.9' } })
+    expect(c?.host).toBe('9.9.9.9')
+  })
+
+  it('🔴 flags a DIRECT chain so the UI can highlight an un-proxied connection', () => {
+    // 对「防泄漏」工具来说，直连的连接是最该被一眼看到的。
+    const c = parseConnection({ ...base, chains: ['DIRECT'] })
+    expect(c?.isDirect).toBe(true)
+  })
+
+  it('drops a connection with no id (cannot key it)', () => {
+    expect(parseConnection({ ...base, id: '' })).toBeNull()
+    expect(parseConnection({ ...base, id: undefined })).toBeNull()
+  })
+
+  it('drops a connection with no usable target', () => {
+    expect(parseConnection({ ...base, metadata: { host: '', destinationIP: '' } })).toBeNull()
+  })
+
+  it.each([null, undefined, 42, 'x', {}])('returns null for a non-connection (%o)', (raw) => {
+    expect(parseConnection(raw)).toBeNull()
+  })
+
+  it('defaults missing numeric/rule fields rather than throwing', () => {
+    const c = parseConnection({ id: 'c2', metadata: { host: 'h' }, chains: [] })
+    expect(c).toEqual({
+      id: 'c2',
+      host: 'h',
+      chain: [],
+      rule: '',
+      upload: 0,
+      download: 0,
+      isDirect: false,
+    })
+  })
+})
+
+describe('getConnections（V0.8）', () => {
+  it('returns normalized connections and cumulative totals', async () => {
+    stubFetch(() =>
+      jsonResponse({
+        connections: [
+          { id: 'a', metadata: { host: 'x.com' }, chains: ['N', 'G'], rule: 'Match', upload: 1, download: 2 },
+        ],
+        uploadTotal: 1230,
+        downloadTotal: 8080,
+      }),
+    )
+
+    const result = await getConnections(settings)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(calls[0]?.url).toBe('http://127.0.0.1:9090/connections')
+    expect(result.connections).toHaveLength(1)
+    expect(result.connections[0]?.host).toBe('x.com')
+    expect(result.uploadTotal).toBe(1230)
+    expect(result.downloadTotal).toBe(8080)
+  })
+
+  it('skips dirty entries but keeps the good ones', async () => {
+    stubFetch(() =>
+      jsonResponse({
+        connections: [
+          { id: 'ok', metadata: { host: 'good' }, chains: [], rule: '', upload: 0, download: 0 },
+          { id: '', metadata: { host: 'nokey' } },
+          'garbage',
+          null,
+        ],
+      }),
+    )
+
+    const result = await getConnections(settings)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.connections.map((c) => c.host)).toEqual(['good'])
+  })
+
+  it('tolerates a missing connections array', async () => {
+    stubFetch(() => jsonResponse({ uploadTotal: 5, downloadTotal: 6 }))
+    const result = await getConnections(settings)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.connections).toEqual([])
+    expect(result.uploadTotal).toBe(5)
+  })
+
+  it('maps a network failure to CORE_OFFLINE', async () => {
+    stubFetch(() => Promise.reject(new Error('down')))
+    const result = await getConnections(settings)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('CORE_OFFLINE')
+  })
+
+  it.each([401, 403])('maps HTTP %i to CORE_AUTH_FAILED', async (status) => {
+    stubFetch(() => jsonResponse({}, status))
+    const result = await getConnections(withSecret)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('CORE_AUTH_FAILED')
+  })
+
+  it('maps a non-JSON 200 body to CORE_BAD_RESPONSE', async () => {
+    stubFetch(() => new Response('<html>', { status: 200 }))
+    const result = await getConnections(settings)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error.code).toBe('CORE_BAD_RESPONSE')
+  })
+
+  it('🔴 sends the secret only in the Authorization header', async () => {
+    stubFetch(() => jsonResponse({ connections: [] }))
+    await getConnections(withSecret)
+    expect(calls[0]?.url).not.toContain(SECRET)
+    expect((calls[0]?.init?.headers as Record<string, string>)?.Authorization).toBe(
+      `Bearer ${SECRET}`,
+    )
   })
 })

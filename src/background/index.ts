@@ -17,7 +17,7 @@
  *   若放进某个 async 流程里延迟注册，SW 被唤醒后事件会在监听器挂上之前丢失。
  */
 
-import { handleMessage, reconcile } from './orchestrator'
+import { handleMessage, handleToggle, reconcile } from './orchestrator'
 import { registerPlatformListeners, registerProxyErrorListener } from './proxy'
 import { getEnabledState, getSettings, setLastError } from './storage'
 
@@ -69,6 +69,19 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   // 返回 true 保持消息通道开启，否则 MV3 下异步 sendResponse 会失效。
   void handleMessage(message).then(sendResponse)
   return true
+})
+
+/*
+ * 键盘快捷键切换代理开关（V0.8）。
+ *
+ * `chrome.commands` 在极少数环境可能缺席（旧内核、被裁剪的构建），用可选链保平安 ——
+ * 缺了它只是没有快捷键，不该让整个 SW 启动时抛错。
+ *
+ * 与其它监听一样必须顶层同步注册：从异步流程里延迟挂上，SW 被唤醒后
+ * 按键会在监听器就位之前丢失（文件头那条铁律）。
+ */
+chrome.commands?.onCommand.addListener((command) => {
+  if (command === 'toggle-proxy') void handleToggle()
 })
 
 console.info('[LostProxy] service worker booted')

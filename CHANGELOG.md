@@ -8,6 +8,45 @@ Each version section below is extracted by `.github/workflows/release.yml` and b
 
 ---
 
+## v0.6.0
+
+Popup 里多了一屏「看得见的流量」：实时连接、上下行速率与迷你曲线、一键选最快、
+键盘快捷键，状态页也直接显示当前出口节点。全部只读内核已有数据，不新增网络行为。
+A "see the traffic" pass: live connections, up/down rate with a mini sparkline, a
+one-tap fastest-node switch, a keyboard shortcut, and the current node on the status tab.
+
+### 新增 / New
+
+- **实时连接（新「实时」标签）。** 列出内核此刻在代理/直连的连接：目标域名、出口节点、
+  命中规则、每条的上下行。直连的连接用告警色标出 —— 对「防泄漏」工具来说，
+  一眼看出**哪些流量没走代理**正是重点。数据来自 `/connections`。
+  **Live connections tab** showing what the core is proxying vs sending direct right now,
+  with DIRECT connections flagged.
+
+- **状态页吞吐组件。** 当前上/下行速率 + 最近约一分钟的迷你双线曲线 + 累计流量。
+  速率由 `/connections` 的累计值**两次采样求差**得到，不额外发请求。
+  **Throughput on the status tab** — current up/down rate, a one-minute sparkline and
+  cumulative totals, derived from sampling `/connections`, at no added network cost.
+
+- **状态页显示当前出口节点**，不必再切到「节点」标签去看选中项。
+  **Current exit node shown on the status tab.**
+
+- **「选最快」。** 一键测速并切到延迟最低的节点；测速后节点列表按延迟重排
+  （测速前保持订阅原序）。
+  **"Fastest" button** — test latency and switch to the lowest-latency node in one tap.
+
+- **键盘快捷键 `Alt+Shift+L`** 切换本浏览器的代理开关，可在浏览器快捷键设置里改键。
+  **Keyboard shortcut `Alt+Shift+L`** to toggle the proxy.
+
+### 说明 / Notes
+
+- 实时连接与吞吐反映的是**整个内核**、不限于本浏览器（与切节点同属「逸出浏览器」，
+  ADR-28），UI 对此有明示。连接里的域名/进程名一律按不可信输入以纯文本渲染。
+  Both views are core-wide, not browser-scoped, and say so; all connection strings are
+  rendered as text, never markup.
+
+---
+
 ## v0.5.0
 
 节点列表现在标注每个节点的协议。数据本来就在已有的响应里，所以不多发一个请求。

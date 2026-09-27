@@ -103,6 +103,15 @@
           aria-controls="pane-nodes"
           data-i18n="popup.tabNodes"
         ></button>
+        <button
+          type="button"
+          class="tab"
+          id="tab-conns"
+          role="tab"
+          aria-selected="false"
+          aria-controls="pane-conns"
+          data-i18n="popup.tabConns"
+        ></button>
       </div>
 
       <section class="pane" id="pane-status" role="tabpanel" aria-labelledby="tab-status">
@@ -152,11 +161,41 @@
         </div>
 
         <dl class="facts">
+          <dt data-i18n="popup.nodeSectionLabel"></dt>
+          <dd id="node-text">—</dd>
           <dt data-i18n="popup.modeLabel"></dt>
           <dd id="mode-text">—</dd>
           <dt data-i18n="popup.webrtcLabel"></dt>
           <dd id="webrtc-text">—</dd>
         </dl>
+
+        <!-- V0.8 实时吞吐。速率由 /connections 的累计值两次采样求差得到，
+             不额外发请求。仅在核心可达时出现。 -->
+        <section class="traffic" id="traffic" hidden>
+          <div class="traffic-rates">
+            <span class="traffic-rate" data-dir="down">
+              <span class="traffic-arrow" aria-hidden="true">↓</span>
+              <span id="traffic-down">—</span>
+            </span>
+            <span class="traffic-rate" data-dir="up">
+              <span class="traffic-arrow" aria-hidden="true">↑</span>
+              <span id="traffic-up">—</span>
+            </span>
+          </div>
+          <!-- 迷你速率曲线：两条 polyline，下行醒目、上行淡。preserveAspectRatio=none
+               让它随容器拉伸，viewBox 用固定坐标系便于计算。 -->
+          <svg
+            class="spark"
+            id="spark"
+            viewBox="0 0 100 32"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <polyline id="spark-down" class="spark-line" data-dir="down" points="" />
+            <polyline id="spark-up" class="spark-line" data-dir="up" points="" />
+          </svg>
+          <span class="traffic-total" id="traffic-total"></span>
+        </section>
       </section>
 
       <section class="pane" id="pane-nodes" role="tabpanel" aria-labelledby="tab-nodes" hidden>
@@ -165,13 +204,22 @@
           <!-- V0.3 测速。刻意是手动触发：一次全量测速会让内核同时向几十个
                节点建连，绑在"打开 Popup"上等于每看一眼状态就触发一次
                （技术方案 §17 / ADR-32）。 -->
-          <button
-            type="button"
-            id="test-latency"
-            class="mini-btn"
-            data-i18n="popup.latencyTest"
-            hidden
-          ></button>
+          <div class="nodes-actions">
+            <button
+              type="button"
+              id="pick-fastest"
+              class="mini-btn"
+              data-i18n="popup.pickFastest"
+              hidden
+            ></button>
+            <button
+              type="button"
+              id="test-latency"
+              class="mini-btn"
+              data-i18n="popup.latencyTest"
+              hidden
+            ></button>
+          </div>
         </div>
 
         <!-- 需要配置 / 需要开外部控制时显示，替代节点列表 -->
@@ -184,6 +232,32 @@
              切节点改的是内核的全局状态，效果不限于本浏览器。
         -->
         <p class="nodes-scope" id="nodes-scope" data-i18n="popup.nodeScopeNotice" hidden></p>
+      </section>
+
+      <!-- V0.8 实时连接。展示内核此刻在代理/直连的连接，供用户核查是否有
+           不该走代理的流量在走、或该走代理的在直连。吞吐速率在「状态」标签。 -->
+      <section class="pane" id="pane-conns" role="tabpanel" aria-labelledby="tab-conns" hidden>
+        <div class="conns-head">
+          <span class="conns-count" id="conns-count"></span>
+          <button
+            type="button"
+            id="conns-refresh"
+            class="mini-btn"
+            data-i18n="popup.connsRefresh"
+            hidden
+          ></button>
+        </div>
+
+        <!-- 需要开外部控制 / 无连接时显示，替代列表 -->
+        <p class="conns-hint" id="conns-hint" hidden></p>
+
+        <ul class="conns-list" id="conns-list"></ul>
+
+        <!--
+          ⚠️ 与节点列表同一条 ADR-28 披露：这里显示的是**整个内核**的连接，
+             不限于本浏览器。
+        -->
+        <p class="conns-scope" id="conns-scope" data-i18n="popup.connsScopeNotice" hidden></p>
       </section>
 
       <!-- 产品承诺的一部分，任何时候都不该消失（技术方案 §13）。

@@ -14,11 +14,29 @@
  * 第一次 GET_STATUS 回来才能确定语言，静态文案也在那之后才填充。
  */
 
-import { LATENCY_FAST_MS, LATENCY_MEDIUM_MS, PROTOCOL_LABELS } from '../shared/constants'
+import {
+  CONNS_POLL_MS,
+  LATENCY_FAST_MS,
+  LATENCY_MEDIUM_MS,
+  PROTOCOL_LABELS,
+  SPARK_POINTS,
+} from '../shared/constants'
 import { isLeakSuspected } from '../shared/errors'
+import {
+  buildSparkline,
+  computeRate,
+  formatBytes,
+  pickFastest,
+  sortNodesByLatency,
+} from './format'
 import { createTranslator, resolveLocale, type MessageKey } from '../shared/i18n'
-import { sendMessage } from '../shared/messages'
-import type { NormalizedError, RoutingMode, StatusSnapshot } from '../shared/types'
+import { sendMessage, type ResponsePayloads } from '../shared/messages'
+import type {
+  ConnectionView,
+  NormalizedError,
+  RoutingMode,
+  StatusSnapshot,
+} from '../shared/types'
 
 const el = {
   card: document.querySelector<HTMLElement>('#proxy-card'),
@@ -31,6 +49,7 @@ const el = {
   coreText: document.querySelector<HTMLElement>('#core-text'),
   coreNote: document.querySelector<HTMLElement>('#core-note'),
   modeText: document.querySelector<HTMLElement>('#mode-text'),
+  nodeText: document.querySelector<HTMLElement>('#node-text'),
   webrtcText: document.querySelector<HTMLElement>('#webrtc-text'),
   settings: document.querySelector<HTMLButtonElement>('#open-settings'),
   nodesGroup: document.querySelector<HTMLElement>('#nodes-group'),
@@ -38,7 +57,19 @@ const el = {
   nodeList: document.querySelector<HTMLElement>('#node-list'),
   nodesScope: document.querySelector<HTMLElement>('#nodes-scope'),
   testLatency: document.querySelector<HTMLButtonElement>('#test-latency'),
+  pickFastestBtn: document.querySelector<HTMLButtonElement>('#pick-fastest'),
   modesHint: document.querySelector<HTMLElement>('#modes-hint'),
+  traffic: document.querySelector<HTMLElement>('#traffic'),
+  trafficDown: document.querySelector<HTMLElement>('#traffic-down'),
+  trafficUp: document.querySelector<HTMLElement>('#traffic-up'),
+  trafficTotal: document.querySelector<HTMLElement>('#traffic-total'),
+  sparkDown: document.querySelector<SVGPolylineElement>('#spark-down'),
+  sparkUp: document.querySelector<SVGPolylineElement>('#spark-up'),
+  connsCount: document.querySelector<HTMLElement>('#conns-count'),
+  connsRefresh: document.querySelector<HTMLButtonElement>('#conns-refresh'),
+  connsHint: document.querySelector<HTMLElement>('#conns-hint'),
+  connsList: document.querySelector<HTMLElement>('#conns-list'),
+  connsScope: document.querySelector<HTMLElement>('#conns-scope'),
 }
 
 /** 全部标签按钮与对应面板。 */
@@ -162,7 +193,7 @@ function renderCore(snapshot: StatusSnapshot): void {
  *    自己用 div + tabindex + keydown 复刻一遍必然漏掉某些行为。
  */
 function renderNodes(snapshot: StatusSnapshot): void {
-  const { nodesGroup, nodesHint, nodeList, nodesScope, testLatency } = el
+  const { nodesGroup, nodesHint, nodeList, nodesScope, testLatency, pickFastestBtn } = el
   if (!nodesGroup || !nodesHint || !nodeList || !nodesScope) return
 
   nodeList.replaceChildren()
@@ -173,8 +204,9 @@ function renderNodes(snapshot: StatusSnapshot): void {
     nodesGroup.textContent = ''
     // 没有可点的东西时不显示边界说明 —— 那句话只在能切换时才有意义。
     nodesScope.hidden = true
-    // 同理，没有节点可测速。
+    // 同理，没有节点可测速 / 选最快。
     if (testLatency) testLatency.hidden = true
+    if (pickFastestBtn) pickFastestBtn.hidden = true
   }
 
   if (snapshot.group === null) {
@@ -200,7 +232,7 @@ function renderNodes(snapshot: StatusSnapshot): void {
     return
   }
 
-  for (const name of snapshot.group.nodes) {
+  for (const name of sortNodesByLatency(snapshot.group.nodes, snapshot.group.latency)) {
     const item = document.createElement('li')
     const button = document.createElement('button')
     button.type = 'button'
@@ -233,6 +265,8 @@ function renderNodes(snapshot: StatusSnapshot): void {
   // ADR-28：能切换时必须显示边界说明。
   nodesScope.hidden = false
   if (testLatency) testLatency.hidden = false
+  // 「选最快」只有在成员多于一个时才有意义。
+  if (pickFastestBtn) pickFastestBtn.hidden = snapshot.group.nodes.length < 2
 }
 
 /**
@@ -304,6 +338,123 @@ function renderModes(snapshot: StatusSnapshot): void {
   }
 }
 
+/**
+ * 渲染实时连接列表（V0.8）。
+ *
+ * 只负责「连接」标签的列表本身；吞吐速率/累计/曲线在「状态」标签，由 renderTraffic 管。
+ * 与 `renderNodes` 同构：核心不可达 / 无连接都是**正常分支**，用提示替代列表，
+ * 不当错误。host / chain / rule 全是不可信输入，一律 textContent。
+ */
+function renderConnections(data: ResponsePayloads['LIST_CONNECTIONS'] | null): void {
+  const { connsList, connsHint, connsCount, connsRefresh, connsScope } = el
+  if (!connsList || !connsHint || !connsScope) return
+
+  connsList.replaceChildren()
+
+  const showHint = (text: string): void => {
+    connsHint.textContent = text
+    connsHint.hidden = false
+    if (connsCount) connsCount.textContent = ''
+    connsScope.hidden = true
+    if (connsRefresh) connsRefresh.hidden = true
+  }
+
+  // null 表示上一次拉取失败（核心不可达 / 未开外部控制）。
+  if (data === null) {
+    showHint(t('popup.connsNeedsController'))
+    return
+  }
+
+  if (connsRefresh) connsRefresh.hidden = false
+
+  if (data.connections.length === 0) {
+    showHint(t('popup.connsEmpty'))
+    return
+  }
+
+  if (connsCount) connsCount.textContent = t('popup.connsCount', { n: data.connections.length })
+  connsHint.hidden = true
+
+  for (const conn of data.connections) {
+    connsList.append(connectionRow(conn))
+  }
+
+  connsScope.hidden = false
+}
+
+/**
+ * 速率历史环形缓冲（V0.8），供状态标签的迷你曲线用。
+ * 只留最近 SPARK_POINTS 个点 —— 曲线是「最近一小段趋势」，不是完整历史。
+ */
+const spark = { up: [] as number[], down: [] as number[] }
+
+/**
+ * 渲染状态标签的实时吞吐组件（V0.8）：当前上/下行速率 + 迷你曲线 + 累计。
+ *
+ * data 为 null（核心不可达）时整块隐藏 —— 状态标签本就有 Core 状态行解释原因，
+ * 这里再报一次错只是噪音。rate 为 null（首次采样）时速率显示 `—`，但曲线与累计照常。
+ */
+function renderTraffic(
+  data: ResponsePayloads['LIST_CONNECTIONS'] | null,
+  rate: { up: number; down: number } | null,
+): void {
+  const { traffic, trafficDown, trafficUp, trafficTotal, sparkDown, sparkUp } = el
+  if (!traffic) return
+
+  if (data === null) {
+    traffic.hidden = true
+    spark.up = []
+    spark.down = []
+    return
+  }
+  traffic.hidden = false
+
+  if (trafficDown) trafficDown.textContent = rate ? `${formatBytes(rate.down)}/s` : '—'
+  if (trafficUp) trafficUp.textContent = rate ? `${formatBytes(rate.up)}/s` : '—'
+  if (trafficTotal) {
+    trafficTotal.textContent = t('popup.connsTotal', {
+      up: formatBytes(data.uploadTotal),
+      down: formatBytes(data.downloadTotal),
+    })
+  }
+
+  // 把这一拍的速率推进曲线缓冲（首次没有 rate 就推 0，保持时间轴连续）。
+  spark.up.push(rate ? rate.up : 0)
+  spark.down.push(rate ? rate.down : 0)
+  if (spark.up.length > SPARK_POINTS) spark.up.shift()
+  if (spark.down.length > SPARK_POINTS) spark.down.shift()
+
+  // 两条线共用一个最大值才能横向比较 —— 通常下行远大于上行。
+  const max = Math.max(1, ...spark.up, ...spark.down)
+  sparkDown?.setAttribute('points', buildSparkline(spark.down, max, 100, 32))
+  sparkUp?.setAttribute('points', buildSparkline(spark.up, max, 100, 32))
+}
+
+/** 构造一条连接的 DOM 行。抽出来是因为它有若干条 textContent 赋值，内联进循环会很挤。 */
+function connectionRow(conn: ConnectionView): HTMLElement {
+  const item = document.createElement('li')
+  item.className = 'conn-item'
+
+  const host = document.createElement('span')
+  host.className = 'conn-host'
+  host.textContent = conn.host
+
+  // 出口：直连显示 DIRECT 徽章，否则显示出口链的第一跳（实际出口节点）。
+  const via = document.createElement('span')
+  via.className = 'conn-via'
+  via.dataset.direct = String(conn.isDirect)
+  via.textContent = conn.isDirect ? t('popup.connsDirect') : (conn.chain[0] ?? '—')
+
+  const meta = document.createElement('span')
+  meta.className = 'conn-meta'
+  // rule 可能为空（内核偶尔不带），空就只显示流量。
+  const traffic = `↑${formatBytes(conn.upload)} ↓${formatBytes(conn.download)}`
+  meta.textContent = conn.rule.length > 0 ? `${conn.rule} · ${traffic}` : traffic
+
+  item.append(host, via, meta)
+  return item
+}
+
 function render(snapshot: StatusSnapshot): void {
   // 语言可能刚被用户改过，每次渲染都重建翻译器并刷新静态文案。
   t = createTranslator(resolveLocale(snapshot.settings.language))
@@ -324,6 +475,9 @@ function render(snapshot: StatusSnapshot): void {
 
   if (el.modeText) el.modeText.textContent = t(modeKey(snapshot))
   if (el.webrtcText) el.webrtcText.textContent = t(webRtcKey(snapshot))
+  // 状态页直接显示当前出口节点，省得为看一眼选中项还要切到「节点」标签往下翻。
+  // group 为空（未配置 / 核心不可达 / 组不存在）或 now 为空（LoadBalance 组）都落到 '—'。
+  if (el.nodeText) el.nodeText.textContent = snapshot.group?.now ?? '—'
 
   renderModes(snapshot)
   renderNodes(snapshot)
@@ -420,11 +574,76 @@ el.nodeList?.addEventListener('click', async (event) => {
   showAlert(response.error)
 })
 
+/**
+ * 吞吐轮询句柄（V0.8）。
+ *
+ * 速率与曲线在「状态」标签（默认可见），所以轮询在 Popup 打开期间**一直跑**，
+ * 不再由标签切换控制 —— 一拍同时喂给状态标签的吞吐组件和连接标签的列表。
+ * Popup 关闭时上下文整个销毁，timer 随之消失，无需手动清理。
+ *
+ * 用自排队的 setTimeout 而非 setInterval：`/connections` 探活最坏等
+ * CORE_PROBE_TIMEOUT_MS(3s)，比轮询间隔(2s)长，setInterval 会让请求叠着发。
+ * 每次拉完再排下一拍，天然不重叠。
+ */
+let connsTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 轮询是否已被主动停止。停止后即便有在途的 tick 也不再排下一拍。 */
+let pollingStopped = false
+
+/** 上一次流量采样，用来算瞬时速率。 */
+let lastSample: { up: number; down: number; at: number } | null = null
+
+/** 拉一次连接：更新状态标签的吞吐组件与连接标签的列表。失败时两者都进降级分支。 */
+async function pollConnections(): Promise<void> {
+  const response = await sendMessage({ type: 'LIST_CONNECTIONS' })
+  if (!response.ok) {
+    lastSample = null // 失败后重置，下次成功不拿旧样本算差值
+    renderTraffic(null, null)
+    renderConnections(null)
+    return
+  }
+  const now = { up: response.data.uploadTotal, down: response.data.downloadTotal, at: Date.now() }
+  const rate = computeRate(lastSample, now)
+  lastSample = now
+  renderTraffic(response.data, rate)
+  renderConnections(response.data)
+}
+
+/** 启动持续轮询。重复调用是安全的：已在跑就不再排第二条链。 */
+function startTrafficPolling(): void {
+  if (connsTimer !== null) return
+  pollingStopped = false
+  const tick = async (): Promise<void> => {
+    await pollConnections()
+    if (pollingStopped) return
+    connsTimer = setTimeout(() => void tick(), CONNS_POLL_MS)
+  }
+  void tick()
+}
+
+/**
+ * 停止轮询。
+ *
+ * 生产环境用不到（Popup 关闭即销毁上下文），**存在只为测试可拆卸** ——
+ * 否则每个 import 起的 setTimeout 链会跨用例乱窜、把消息塞进别的用例的断言里。
+ */
+export function stopTrafficPolling(): void {
+  pollingStopped = true
+  if (connsTimer !== null) {
+    clearTimeout(connsTimer)
+    connsTimer = null
+  }
+}
+
 for (const tab of tabs) {
   tab.addEventListener('click', () => {
     selectTab(tab.id)
   })
 }
+
+el.connsRefresh?.addEventListener('click', () => {
+  void pollConnections()
+})
 
 /*
  * 分流模式切换（V0.4）。
@@ -483,6 +702,47 @@ el.settings?.addEventListener('click', () => {
   void chrome.runtime.openOptionsPage()
 })
 
+/*
+ * 「选最快」（V0.8）。先测速拿到最新延迟，再选出最低的那个切过去。
+ *
+ * 刻意先测速而非直接用现有 latency：现有值可能是很久以前测的、甚至没有。
+ * 与切节点同属「逸出浏览器」的操作（改的是内核选中项，ADR-28）。
+ * 已经是最快就不再发 SELECT_NODE —— 白切一次没意义。
+ */
+el.pickFastestBtn?.addEventListener('click', async () => {
+  const button = el.pickFastestBtn
+  if (!button) return
+
+  button.disabled = true
+  const original = button.textContent
+  button.textContent = t('popup.latencyTesting')
+
+  const tested = await sendMessage({ type: 'TEST_LATENCY' })
+  if (!tested.ok) {
+    button.disabled = false
+    button.textContent = original
+    await refresh()
+    showAlert(tested.error)
+    return
+  }
+  render(tested.data)
+
+  const group = tested.data.group
+  const fastest = group === null ? null : pickFastest(group.nodes, group.latency)
+
+  if (fastest !== null && group !== null && fastest !== group.now) {
+    const selected = await sendMessage({ type: 'SELECT_NODE', node: fastest })
+    if (selected.ok) render(selected.data)
+    else {
+      await refresh()
+      showAlert(selected.error)
+    }
+  }
+
+  button.disabled = false
+  button.textContent = original
+})
+
 // 先用浏览器语言把静态文案填上，避免面板在探活的这几秒里一片空白。
 applyStaticText()
 
@@ -491,3 +751,6 @@ applyStaticText()
 void refresh().finally(() => {
   setBusy(false)
 })
+
+// 吞吐组件在默认可见的「状态」标签，所以轮询随 Popup 打开就启动、一直跑到关闭。
+startTrafficPolling()

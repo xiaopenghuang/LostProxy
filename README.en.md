@@ -39,10 +39,13 @@ those, and the extension only decides which traffic goes through the proxy.
 ## Features
 
 - Proxy toggle, scoped to the current browser
-- Node switching, latency testing and per-node protocol labels (VLESS / HY2 …),
-  without opening a Clash client
+- Node switching, latency testing, per-node protocol labels (VLESS / HY2 …) and a
+  one-tap switch to the fastest node, without opening a Clash client
+- Live connections and throughput: see what the core is proxying vs sending direct
+  right now, with up/down rate and a mini sparkline (direct connections are flagged)
 - Rule-based routing with a configurable direct-connect host list
 - Subscription refresh
+- Keyboard shortcut (`Alt+Shift+L`) to toggle the proxy for this browser
 - Locks WebRTC in step, so UDP cannot bypass the HTTP proxy and expose the
   real IP
 - Breaks the connection when the proxy is unreachable rather than falling
