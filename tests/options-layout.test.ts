@@ -337,3 +337,25 @@ describe('站点清单的布局（V0.8.0）', () => {
     expect(document.querySelectorAll('.field--stacked')).toHaveLength(1)
   })
 })
+
+describe('时区卡片的宽度（V0.8.0）', () => {
+  it('🔴 占满整行，不在旁边留空白', () => {
+    /*
+     * `.grid` 是 `auto-fit, minmax(360px, 1fr)` 的两列。这张卡里有清单输入、
+     * 四个快捷按钮和三个动作按钮，挤在一列里不只是"窄"：它会在右边留下
+     * 一整片页面背景，看起来像少了一半内容。
+     *
+     * 用 `grid-column: 1 / -1` 而不是 `span 2` —— auto-fit 的列数取决于
+     * 视口，宽屏下可能是三列，写死 span 2 到时只占三分之二。
+     */
+    const card = document.querySelector('[data-i18n="options.tzTitle"]')?.closest('.card')
+    expect(card).not.toBeNull()
+    expect(card?.classList.contains('card--wide')).toBe(true)
+  })
+
+  it('其它卡片仍是单列', () => {
+    // 全都拉宽等于没有布局，而且会让「订阅」「泄漏防护」这类短卡片空得离谱。
+    const wide = document.querySelectorAll('.card--wide')
+    expect(wide).toHaveLength(1)
+  })
+})
