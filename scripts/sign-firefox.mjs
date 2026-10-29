@@ -49,8 +49,19 @@
  *   AMO_API_SECRET  JWT secret
  *
  * 到 https://addons.mozilla.org/developers/addon/api/key/ 生成。
- * 放进 `.env`（已在 .gitignore 里）然后 `set -a; . ./.env; set +a`，
- * 或者临时 export。本脚本**不打印**它们的值，出错时也只说"缺哪个"。
+ * 放进 `.env`（已在 .gitignore 里），由 `--env-file-if-exists` 自动加载。
+ * 本脚本**不打印**它们的值，出错时也只说"缺哪个"。
+ *
+ * ## 代理
+ *
+ * 设了 `HTTPS_PROXY` 就走它，没设就直连。这一条不能省：
+ * `addons.mozilla.org` 在 Fastly 上，国内网络时通时不通，而失败形态是
+ * 一句没有指向性的 `fetch failed`。
+ *
+ * ⚠️ 光设变量不够 —— Node 的内置 `fetch` 不读代理环境变量
+ *    （`NODE_USE_ENV_PROXY` 要 Node 24，本项目要求 22.9）。所以本脚本把
+ *    `scripts/amo-proxy.cjs` 经 `NODE_OPTIONS=--require=` 注入给 web-ext
+ *    子进程，让它自己接管 dispatcher。细节在那个文件里。
  *
  * ## 用法
  *
@@ -60,8 +71,13 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { findStrayRootEntries } from './repo-manifest.mjs'
+
+const require = createRequire(import.meta.url)
+// `--require` 只吃 CJS，所以这个文件是 .cjs —— 出处见文件头。
+const amoProxy = require('./amo-proxy.cjs')
 
 const ROOT = resolve(import.meta.dirname, '..')
 const OUT_DIR = resolve(ROOT, 'release')
@@ -139,6 +155,55 @@ if (missing.length > 0) {
       '  这条提示出现，说明 .env 不存在、或者里面缺这两个键。\n' +
       '  （.env 已在 .gitignore 里。别把它提交上去，也别贴给任何人。）',
   )
+}
+
+/* ---------- 代理 ---------- */
+
+/**
+ * 把 `--require=<代理预载>` 追加进 `NODE_OPTIONS`。
+ *
+ * 只在检测到代理时做，且**不改动已有的 NODE_OPTIONS** —— 用户可能自己
+ * 塞了别的前置模块（`--max-old-space-size` 之类），覆盖掉是一种很难查的
+ * 干扰。用空格拼接是 `NODE_OPTIONS` 本身的格式约定。
+ *
+ * ⚠️ 路径含空格时加引号。本项目的开发路径是 `I:\开发\LostProxy`（非 ASCII
+ *    但无空格）—— 那能直接用；空格则必须引起来，否则 Node 会把路径截断。
+ */
+function withProxyPreload(existing, preloadPath) {
+  const quoted = /\s/.test(preloadPath) ? `"${preloadPath}"` : preloadPath
+  const option = `--require=${quoted}`
+  return typeof existing === 'string' && existing.trim().length > 0
+    ? `${existing.trim()} ${option}`
+    : option
+}
+
+const proxyUrl = amoProxy.proxyFromEnv()
+
+if (proxyUrl !== null && !amoProxy.undiciAvailable()) {
+  fail(
+    `检测到 HTTPS_PROXY，但没装 undici —— 它负责让 Node 认这个变量。\n\n` +
+      '  在项目里跑一次 npm install 就有了（它在 devDependencies 里）。\n' +
+      '  不想让 Node 走代理的话，把 HTTPS_PROXY 清掉再跑，会直接连 AMO。',
+  )
+}
+
+/**
+ * 打印用的代理地址：抹掉可能内嵌的账号密码。
+ *
+ * `http://user:pass@127.0.0.1:2080` 这种形式真实存在（商业代理常见），
+ * 而这段文字会进终端、进 CI 日志、被复制进聊天窗口。
+ */
+function maskProxy(url) {
+  try {
+    const parsed = new URL(url)
+    if (parsed.username.length === 0 && parsed.password.length === 0) return url
+    parsed.username = '***'
+    parsed.password = ''
+    return parsed.toString()
+  } catch {
+    // 不是合法 URL，就整体当作敏感值不显示结构。
+    return '(configured)'
+  }
 }
 
 /* ---------- 源码包 ---------- */
@@ -279,15 +344,11 @@ console.log(`  strict_min       ${minVersion}`)
 console.log(`  待签目录          dist-firefox/  (${distFiles.length} 个文件)`)
 console.log(`  源码包            ${source.name}  ${source.size} bytes`)
 console.log(`  源码包 sha256     ${source.sha}`)
+console.log(`  网络              ${proxyUrl === null ? '直连 AMO' : `经代理 ${maskProxy(proxyUrl)}`}`)
 console.log('\n把源码包一并上传 —— background.js 是打包压缩过的，AMO 要求附源码。\n')
 
 /*
- * 交给 web-ext。
- *
- * ⚠️ 凭据经**环境变量**传给子进程，不进命令行参数。
- *    命令行是全局可见的（ps / 任务管理器 / shell history），
- *    而这两个值等于"能以你的身份向 AMO 提交任何东西"。
- *    web-ext 认 WEB_EXT_API_KEY / WEB_EXT_API_SECRET 这两个环境变量。
+ * 交给 web-ext。凭据怎么进子进程见下面 `childEnv` —— 刻意不走命令行参数。
  */
 const args = [
   '--yes',
@@ -350,15 +411,34 @@ function resolveNpx() {
 
 const [npxBin, npxPrefix] = resolveNpx()
 
+/*
+ * 子进程的环境。
+ *
+ * ⚠️ 凭据经**环境变量**传，不进命令行参数 —— 命令行是全局可见的
+ *    （ps / 任务管理器 / shell history），而这两个值等于"能以你的身份
+ *    向 AMO 提交任何东西"。web-ext 认 WEB_EXT_API_KEY / WEB_EXT_API_SECRET。
+ *
+ * ⚠️ NODE_OPTIONS 继承给 web-ext 自己 spawn 的孙进程，所以代理和它的
+ *    重建/轮询请求都走同一条路 —— 这比只给顶层进程设 dispatcher 更完整。
+ */
+const childEnv = {
+  ...process.env,
+  WEB_EXT_API_KEY: apiKey,
+  WEB_EXT_API_SECRET: apiSecret,
+}
+
+if (proxyUrl !== null) {
+  childEnv.NODE_OPTIONS = withProxyPreload(
+    process.env.NODE_OPTIONS,
+    resolve(import.meta.dirname, 'amo-proxy.cjs'),
+  )
+}
+
 try {
   execFileSync(npxBin, [...npxPrefix, ...args], {
     cwd: ROOT,
     stdio: 'inherit',
-    env: {
-      ...process.env,
-      WEB_EXT_API_KEY: apiKey,
-      WEB_EXT_API_SECRET: apiSecret,
-    },
+    env: childEnv,
   })
 } catch (thrown) {
   /*
@@ -391,7 +471,17 @@ try {
     '签名未完成，具体原因见上面 web-ext 的输出。\n\n' +
       '  校验失败      → 按它列出的项改，然后重跑\n' +
       '  等待审核超时  → 提交已经在 AMO 那边了，**别重传**（会撞版本已存在）。\n' +
-      '                  去 https://addons.mozilla.org/developers/ 看状态并下载',
+      '                  去 https://addons.mozilla.org/developers/ 看状态并下载' +
+      /*
+       * 直连时的"网络类失败"最容易被误读成 AMO 出问题或凭据不对，
+       * 而真正的原因通常是 addons.mozilla.org（Fastly）在这条线路上
+       * 时通时不通。给一句可执行的下一步，比让人猜强。
+       */
+      (proxyUrl === null
+        ? '\n\n  报的是 fetch / ETIMEDOUT / socket 一类 → 多半是连不上 AMO。\n' +
+          '  设 HTTPS_PROXY 再跑一次（脚本会自动让 web-ext 走它），例如：\n' +
+          '    HTTPS_PROXY=http://127.0.0.1:2080 npm run sign:firefox'
+        : ''),
   )
 }
 
