@@ -146,6 +146,13 @@ servers read without executing any JS. The rule set is deliberately narrow:
   country — plus once at browser startup. Rules persist across restarts, so leaving
   one behind would keep rewriting headers with no visible trace.
 
+This was **verified on Firefox, not assumed from the documentation**: with the
+language switch on and the site granted, a request from the listed domain arrives
+with `Accept-Language: en-US,en;q=0.9`. `modifyHeaders` is a comparatively recent
+part of Firefox's `declarativeNetRequest` support, so the failure mode worth
+ruling out was silent — the rule installs, reports success, and the header still
+says `zh-CN`. It does not; the header is rewritten.
+
 If the rule cannot be installed, the extension skips the language part entirely and
 only changes the timezone. That is intentional: a page whose header says `zh-CN`
 while its JS says `en-US` is more distinctive than one that changes neither.
