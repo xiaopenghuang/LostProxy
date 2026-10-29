@@ -19,7 +19,14 @@
 import { createTranslator, languageLabel, LANGUAGE_OPTIONS, resolveLocale } from '../shared/i18n'
 import type { Language, Locale, MessageKey } from '../shared/i18n'
 import { sendMessage } from '../shared/messages'
-import type { ProviderView, ProxyGroup, Settings, SettingsView } from '../shared/types'
+import type {
+  ProviderView,
+  ProxyGroup,
+  SelfCheckReport,
+  Settings,
+  SettingsView,
+  TimezoneSnapshot,
+} from '../shared/types'
 
 const el = {
   form: document.querySelector<HTMLFormElement>('#form'),
@@ -51,6 +58,16 @@ const el = {
   routingPerm: document.querySelector<HTMLElement>('#routing-perm'),
   grantRoutingPerm: document.querySelector<HTMLButtonElement>('#grant-routing-perm'),
   routingPermResult: document.querySelector<HTMLElement>('#routing-perm-result'),
+  tzEnabled: document.querySelector<HTMLInputElement>('#tz-enabled'),
+  tzLocale: document.querySelector<HTMLInputElement>('#tz-locale'),
+  tzHosts: document.querySelector<HTMLTextAreaElement>('#tz-hosts'),
+  tzStatus: document.querySelector<HTMLElement>('#tz-status'),
+  tzError: document.querySelector<HTMLElement>('#tz-error'),
+  tzSync: document.querySelector<HTMLButtonElement>('#tz-sync'),
+  tzGrant: document.querySelector<HTMLButtonElement>('#tz-grant'),
+  tzResult: document.querySelector<HTMLElement>('#tz-result'),
+  tzCheck: document.querySelector<HTMLButtonElement>('#tz-check'),
+  checkList: document.querySelector<HTMLElement>('#check-list'),
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +239,10 @@ function refreshDirtyState(): void {
     patch.primaryGroup !== loaded.primaryGroup ||
     // secret 只要输入框非空就算有改动（留空 = 保持原值，不是清空）
     patch.controllerSecret !== undefined ||
-    (patch.directRules ?? []).join('\n') !== loaded.directRules.join('\n')
+    (patch.directRules ?? []).join('\n') !== loaded.directRules.join('\n') ||
+    patch.timezoneSyncEnabled !== loaded.timezoneSyncEnabled ||
+    patch.localeSyncEnabled !== loaded.localeSyncEnabled ||
+    (patch.timezoneHosts ?? []).join('\n') !== loaded.timezoneHosts.join('\n')
 
   bar.dataset.dirty = String(dirty)
 }
@@ -232,6 +252,90 @@ let t = createTranslator(locale)
 
 /** 最近一次从 background 拿到的视图，用于检测未保存改动。 */
 let loaded: SettingsView | null = null
+
+/**
+ * 最近一次探测到的时区快照（V0.9）。
+ *
+ * 与 `loaded` 刻意分开：那个是「已保存的设置」，这个是「运行时的探测结果」，
+ * 两者生命周期不同 —— 点一次「立即探测」只更新这一个，不触碰保存态，
+ * 也不该让保存栏亮起来。
+ */
+let timezoneState: TimezoneSnapshot | null = null
+
+/**
+ * 把探测时间格式化成一句给人看的话。
+ *
+ * 用当前界面语言而不是系统语言：设置页可能被切成英文而系统是中文，
+ * 那时冒出「10月29日 15:04」会很突兀。
+ */
+function formatProbedAt(at: number): string {
+  return new Date(at).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+/**
+ * 把探测结果显示成一行「时区 · 出口 IP · 节点 · 时间」，外加一条失败说明。
+ *
+ * 四项都显示而不是只给时区名：只给时区的话，一个来自直连出口的错误结果
+ * 看起来和正确结果**完全一样**。带上 IP、节点与时间，用户才能自己判断
+ * 这次探测是不是走对了路径、值是新的还是旧的。
+ *
+ * 失败与"当前值"分开渲染，因为两者可以同时成立 —— 旧时区还在用，
+ * 而最近一次刷新失败了。把它们塞进一行，必然要牺牲其中一个。
+ */
+/**
+ * 时区没开时，语言那一项没有依附对象 —— 禁用，而不是隐藏。
+ *
+ * 隐藏会让用户以为这个选项不存在（下次打开时区时，他不知道还有这一项）；
+ * 禁用保留了「有这一项、但得先开时区」的信息，也保留了已勾选的状态，
+ * 重新打开时区时他的选择还在。
+ */
+function syncLocaleAvailability(): void {
+  if (el.tzLocale === null) return
+  el.tzLocale.disabled = !(el.tzEnabled?.checked ?? false)
+}
+
+function renderTimezoneState(): void {
+  if (el.tzStatus === null) return
+
+  const snapshot = timezoneState
+
+  if (snapshot === null) {
+    el.tzStatus.textContent = t('options.tzNever')
+  } else if (snapshot.zone === null) {
+    el.tzStatus.textContent = t('options.tzNever')
+  } else {
+    const parts = [snapshot.zone]
+    /*
+     * 语言紧跟时区，因为它们是同一份档案的两半 —— 但**只在语言开关打开时**显示。
+     *
+     * 否则会出现一个假的承诺：探测确实拿到了 `en-US`，但用户没勾「语言也跟随
+     * 出口」，页面里的语言根本没被改。面板上写着一个没生效的值，比不写更糟。
+     *
+     * 勾了却拿不到（国家不在表里）时明说，否则用户没有任何线索解释
+     * "为什么界面还是中文" —— 而那正是这个开关承诺过要改的东西。
+     */
+    const wantsLocale = el.tzLocale?.checked ?? false
+    if (wantsLocale) {
+      parts.push(snapshot.locale !== null ? snapshot.locale : t('options.tzNoLocale'))
+    }
+    if (snapshot.exitIp !== null) parts.push(snapshot.exitIp)
+    if (snapshot.node !== null) parts.push(snapshot.node)
+    // at 为 0 是旧版本留下的快照，没有可显示的时间。
+    if (snapshot.at > 0) parts.push(formatProbedAt(snapshot.at))
+    el.tzStatus.textContent = `${t('options.tzDetected')}: ${parts.join(' · ')}`
+  }
+
+  if (el.tzError !== null) {
+    const error = snapshot?.error ?? null
+    el.tzError.hidden = error === null
+    el.tzError.textContent = error === null ? '' : t(error.key, error.params)
+  }
+}
 
 /**
  * 最近一次读到的策略组列表。
@@ -308,6 +412,17 @@ function renderSettings(view: SettingsView): void {
         ? t('options.rulesCount', { count: view.directRules.length })
         : t('options.rulesNeedRules')
   }
+
+  if (el.tzEnabled) el.tzEnabled.checked = view.timezoneSyncEnabled
+  if (el.tzLocale) el.tzLocale.checked = view.localeSyncEnabled
+  syncLocaleAvailability()
+  if (el.tzHosts) {
+    el.tzHosts.value = view.timezoneHosts.join('\n')
+    el.tzHosts.placeholder = t('options.tzHostsPlaceholder')
+  }
+  // 语言可能刚切过，这一行是动态写入的，`applyStaticText()` 不会碰它。
+  renderTimezoneState()
+  void refreshTimezonePermission()
 
   /*
    * 语言可能刚被用户切过，而授权状态文案是动态写进去的，
@@ -490,6 +605,13 @@ function collectPatch(): Partial<Settings> {
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0),
+    timezoneSyncEnabled: el.tzEnabled?.checked ?? false,
+    localeSyncEnabled: el.tzLocale?.checked ?? false,
+    // 与 directRules 同样的处理：切片在 UI，校验在 background 的写入路径上。
+    timezoneHosts: (el.tzHosts?.value ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0),
   }
 
   const typed = el.secret?.value ?? ''
@@ -514,6 +636,7 @@ function hasUnsavedControllerChange(): boolean {
 async function load(): Promise<void> {
   const response = await sendMessage({ type: 'GET_STATUS' })
   if (response.ok) {
+    timezoneState = response.data.timezone
     renderSettings(response.data.settings)
   } else {
     setResult(el.saveResult, t(response.error.key, response.error.params), 'error')
@@ -694,6 +817,246 @@ el.subsList?.addEventListener('click', async (event) => {
     button.textContent = original
     setResult(el.subsResult, t(response.error.key, response.error.params), 'error')
   }
+})
+
+// ---------------------------------------------------------------------------
+// 时区同步（V0.9）
+// ---------------------------------------------------------------------------
+
+/**
+ * 读出站点清单框里当前的域名。
+ *
+ * 这里不校验格式（那是 background 写入路径的事），但必须小写化并去重：
+ * `permissions.request` 的 origins 是按字符串比对的匹配模式，
+ * `ChatGPT.com` 与 `chatgpt.com` 在权限表里是两条，而浏览器眼里是一个站点。
+ */
+function readTimezoneHosts(): string[] {
+  const raw = (el.tzHosts?.value ?? '')
+    .split('\n')
+    .map((line) => line.trim().toLowerCase())
+    .filter((line) => line.length > 0)
+  return [...new Set(raw)]
+}
+
+/**
+ * 按实际授权状态更新「授予访问权限」按钮。
+ *
+ * 为什么要查而不是等到注入失败再说：授权缺失是**静默**的 ——
+ * `executeScript` 失败时我们按设计什么都不报（页面加载路径上不该
+ * 冒出与当前动作无关的提示）。于是用户可以先看到"已开启"，然后在
+ * 一个毫无变化的页面上猜哪里出了问题。把状态摆在按钮上，
+ * 这个缺口就不存在了。
+ *
+ * `permissions.contains()` 不需要用户手势，所以这里可以放心 await。
+ */
+async function refreshTimezonePermission(): Promise<void> {
+  const button = el.tzGrant
+  if (button === null) return
+
+  const hosts = readTimezoneHosts()
+  if (hosts.length === 0) {
+    button.textContent = t('options.tzGrant')
+    button.disabled = false
+    return
+  }
+
+  let granted = false
+  try {
+    granted = await chrome.permissions.contains({
+      origins: hosts.map((host) => `*://*.${host}/*`),
+    })
+  } catch {
+    // 查询失败当作未授权：让用户再点一次，比显式禁用按钮更可恢复。
+    granted = false
+  }
+
+  button.textContent = t(granted ? 'options.tzGranted' : 'options.tzGrant')
+  button.disabled = granted
+}
+
+el.tzGrant?.addEventListener('click', () => {
+  const hosts = readTimezoneHosts()
+  if (hosts.length === 0) {
+    // 与 background 的 handleSyncTimezone 用同一条文案：两处各写一份，
+    // 迟早会出现「同一件事两种说法」。这里只是不用等一次消息往返。
+    setResult(el.tzResult, t('error.timezoneNoHosts'), 'error')
+    return
+  }
+
+  /*
+   * 🔴 与上面 `grant-routing-perm` 同一条约束：`request()` 之前不能有任何
+   *    await，否则回调失去 user-input-handler 身份、`request()` 直接抛。
+   *    所以这里也是同步回调 + `.then()`。
+   *
+   * 只请求**用户列出的那些 origin**，不请求 `<all_urls>` —— 声明里是
+   * `<all_urls>`（因为清单可配），但实际索取的是子集。用户看到的授权弹窗
+   * 因此具体到站点，而不是一句"读取和更改所有网站上的数据"。
+   */
+  const request: { origins: string[]; data_collection?: string[] } = {
+    origins: hosts.map((host) => `*://*.${host}/*`),
+  }
+
+  /*
+   * Firefox 还要一并请求**数据同意**。
+   *
+   * manifest 里声明的是 `optional: ["locationInfo"]` —— 意思是"用户可以选择
+   * 让扩展传输位置相关信息"，而 Mozilla 的设计是：可选项默认不授予，
+   * 由扩展在安装后通过 `permissions.request({ data_collection })` 征得同意。
+   * 只声明不请求，那句声明就是空话：about:addons 里的开关永远不会亮，
+   * 用户也没有任何地方能表达同意。
+   *
+   * 传输出口 IP 确实属于这一类（可推断地理位置），所以在开启这个功能的
+   * 同一刻索取，是它唯一说得通的时机。
+   *
+   * ⚠️ Chromium 不认识 `data_collection` 字段，所以只在 Firefox 构建里带上。
+   *    构建期常量让这个分支在 Chromium 产物里整段消失。
+   */
+  if (__LOSTPROXY_PLATFORM__ === 'firefox') {
+    request.data_collection = ['locationInfo']
+  }
+
+  const requesting = chrome.permissions.request(
+    request as unknown as chrome.permissions.Permissions,
+  )
+
+  if (el.tzGrant) el.tzGrant.disabled = true
+
+  requesting
+    .then((granted) => {
+      setResult(
+        el.tzResult,
+        t(granted ? 'options.tzGranted' : 'options.tzNeedsPermission'),
+        granted ? 'ok' : 'error',
+      )
+      // 按钮文案跟着变（变成「已授权」并禁用），让状态留在界面上。
+      void refreshTimezonePermission()
+    })
+    .catch(() => {
+      // 抛错等同于没拿到。最可能的原因是手势丢失 —— 那意味着上面的约束被破坏了。
+      setResult(el.tzResult, t('options.tzNeedsPermission'), 'error')
+    })
+    .finally(() => {
+      if (el.tzGrant) el.tzGrant.disabled = false
+    })
+})
+
+/*
+ * 站点清单一变，之前那次授权就可能不再覆盖新加的域名 ——
+ * 重新查一次，把按钮从「已授权」变回可点。
+ */
+el.tzHosts?.addEventListener('change', () => {
+  void refreshTimezonePermission()
+})
+
+/**
+ * 渲染自检结果（V0.8.0）。
+ *
+ * 每次重建整个列表而不是逐项更新：结论的**条数**会变（清单为空时只有
+ * 两项，实测失败时多一项），逐项更新要处理增删，而这里的数据量本来就
+ * 是六条 —— 重建更简单，也更不容易漏。
+ */
+function renderSelfCheck(report: SelfCheckReport): void {
+  if (el.checkList === null) return
+
+  el.checkList.replaceChildren(
+    ...report.steps.map((step) => {
+      const item = document.createElement('li')
+      item.className = 'check-item'
+      item.dataset.state = step.ok ? 'ok' : 'fail'
+      item.textContent = t(
+        step.key as MessageKey,
+        step.params as Record<string, string | number> | undefined,
+      )
+      return item
+    }),
+  )
+  el.checkList.hidden = false
+}
+
+/*
+ * 常见站点的快捷填充。
+ *
+ * 只写进输入框，不保存、也不替用户勾选任何开关 —— 它省的是打字，
+ * 不是决定。写完后主动派发一个 change，让保存条亮起来、并重新查一次
+ * 授权（新加的域名多半还没授权）。
+ */
+for (const chip of document.querySelectorAll<HTMLButtonElement>('[data-tz-host]')) {
+  chip.addEventListener('click', () => {
+    const host = chip.dataset.tzHost
+    if (host === undefined || el.tzHosts === null) return
+
+    const current = el.tzHosts.value
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+
+    // 已经有了就什么都不做 —— 重复点击不该产生两行一样的域名。
+    if (current.includes(host)) return
+
+    current.push(host)
+    el.tzHosts.value = current.join('\n')
+    el.tzHosts.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+}
+
+/*
+ * 时区开关一变，语言那一项的可用性跟着变。
+ *
+ * 这只是 UI 反馈，不是功能判断 —— 真正的判断在 `alignHeaders` 与
+ * `profileFrom` 里，它们读的是落盘后的设置。这条监听漏了不影响正确性，
+ * 只会出现一个"能勾但不会生效"的选项。
+ */
+el.tzCheck?.addEventListener('click', async () => {
+  const response = await sendMessage({ type: 'SELF_CHECK' })
+  if (response.ok) {
+    renderSelfCheck(response.data)
+  } else {
+    setResult(el.tzResult, t(response.error.key, response.error.params), 'error')
+  }
+})
+
+el.tzEnabled?.addEventListener('change', () => {
+  syncLocaleAvailability()
+  // 状态行里是否显示语言取决于这个开关，所以它变了要重绘。
+  renderTimezoneState()
+})
+
+el.tzLocale?.addEventListener('change', renderTimezoneState)
+
+/*
+ * 权限被撤销后要及时反映（V0.9）。
+ *
+ * 用户在 about:addons 或浏览器的站点访问设置里撤掉之后，扩展这边是**静默**
+ * 失效的：`executeScript` 失败被 catch 掉，页面照常打开，只是时区不再同步。
+ * 不监听这个事件的话，设置页会一直显示「已授权」——一个按钮骗人的状态。
+ *
+ * `?.` 是必要的：`permissions.onRemoved` 在个别构建里可能缺席，
+ * 缺了只是状态不自动刷新，不该让整个页面起不来。
+ */
+chrome.permissions?.onRemoved?.addListener(() => {
+  void refreshTimezonePermission()
+})
+
+el.tzSync?.addEventListener('click', async () => {
+  if (el.tzSync) el.tzSync.disabled = true
+  setResult(el.tzResult, t('options.tzSyncing'), '')
+
+  const response = await sendMessage({ type: 'SYNC_TIMEZONE' })
+
+  if (el.tzSync) el.tzSync.disabled = false
+
+  if (!response.ok) {
+    setResult(el.tzResult, t(response.error.key, response.error.params), 'error')
+    return
+  }
+
+  timezoneState = response.data.timezone
+  renderTimezoneState()
+  /*
+   * 提示要刷新：注入只能在页面开始加载时发生，已经跑起来的页面
+   * 不会被改动。不说这一句，用户会盯着一个没变的页面以为功能坏了。
+   */
+  setResult(el.tzResult, t('options.tzReloadNote'), 'ok')
 })
 
 /*

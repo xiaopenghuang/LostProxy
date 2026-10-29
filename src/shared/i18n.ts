@@ -88,6 +88,10 @@ const EN = {
 
   // ---- V0.2 节点切换 ----
   'popup.nodeSectionLabel': 'Node',
+  'popup.timezoneLabel': 'Timezone',
+  'popup.timezoneRefresh': 'Detect the exit timezone now',
+  'popup.timezoneSyncFailed': 'sync failed',
+  'popup.timezoneNone': 'not synced',
   'popup.nodeLoading': 'Loading nodes…',
   'popup.nodeSwitching': 'Switching…',
   'popup.nodeCurrent': 'Current',
@@ -286,6 +290,59 @@ const EN = {
     'Cannot reach the controller. Save the controller settings above first.',
   'error.subsUpdateFailed':
     'Could not update "{name}". The core rejected the request — the subscription URL may be unreachable.',
+
+  // ---- Timezone sync (V0.9) ----
+  'options.tzTitle': 'Timezone sync',
+  'options.tzTag': 'Needs site access',
+  'options.tzDesc':
+    'Makes the sites below see the timezone of wherever the proxy exits, instead of this computer’s. Only active while the proxy is on — with it off, your exit is your own location anyway.',
+  'options.tzEnable': 'Follow the proxy exit',
+  'options.tzLocaleEnable': 'Match the exit language too',
+  'options.tzLocaleHint':
+    'Rewrites navigator.language and the Accept-Language header. Target sites may switch their interface language.',
+  'options.tzHosts': 'Sites',
+  'options.tzHostsHint': 'One domain per line. Subdomains are included automatically.',
+  'options.tzHostsPlaceholder': 'chatgpt.com',
+  'options.tzDetected': 'Detected',
+  'options.tzNever': 'Not detected yet',
+  'options.tzNoLocale': 'language not synced',
+  'options.tzSync': 'Detect now',
+  'options.tzSyncing': 'Detecting…',
+  'options.checkRun': 'Check the open page',
+  'check.featureOn': 'Timezone sync is on',
+  'check.featureOff': 'Timezone sync is off',
+  'check.hostsFilled': 'The site list has entries',
+  'check.hostsEmpty': 'The site list is empty',
+  'check.hostMatched': '{host} is in the list',
+  'check.noTarget': 'None of the listed sites is open — open one first',
+  'check.permitted': 'Site access is granted',
+  'check.notPermitted': 'No access to this site yet — press “Grant access”',
+  'check.proxyOn': 'The proxy is running',
+  'check.proxyOff': 'The proxy is off, so the page uses your real exit',
+  'check.applied': 'Active on the page: {actual}',
+  'check.needsReload': 'The page is still {actual}, expected {expected} — reload it',
+  'check.unreadable': 'Could not read the page value; access may have been revoked',
+  'options.tzGrant': 'Grant access',
+  'options.tzGranted': 'Access granted',
+  'options.tzNeedsPermission': 'Site access required before this takes effect.',
+  'options.tzNeedsProxy': 'Turn the proxy on first — there is no exit to detect without it.',
+  'options.tzProbeNote':
+    'Detection sends one request through the proxy to ipinfo.io, which sees your exit IP. Nothing is stored off this machine.',
+  'options.tzReloadNote': 'Already-open tabs keep their timezone until reloaded.',
+  'error.timezoneProbeFailed':
+    'Could not detect the exit timezone ({reason}). The proxy itself is unaffected.',
+  'error.timezoneInvalidZone':
+    'The location service returned a timezone this browser does not recognise: {zone}',
+  'error.timezonePermissionRequired':
+    'LostProxy has no access to the listed sites. Open Settings and press “Grant access to these sites”.',
+  'error.timezoneProxyOff':
+    'The proxy is off, so there is no exit to detect. Turn it on first.',
+  'error.timezoneNoHosts':
+    'No sites are listed, so nothing would be changed. Add a domain under Sites first.',
+  'validation.tzLocaleEnabled': 'Language sync must be on or off.',
+  'validation.tzEnabled': 'Timezone sync must be on or off.',
+  'validation.tzHostInvalid': 'Not a valid domain: {host}',
+  'validation.tzHostsTooMany': 'Too many sites ({count}). The limit is {max}.',
 } as const
 
 /** 所有可用文案键。由英文字典自动推导，无需手工维护联合类型。 */
@@ -362,6 +419,10 @@ const ZH: Record<MessageKey, string> = {
 
   // ---- V0.2 节点切换 ----
   'popup.nodeSectionLabel': '节点',
+  'popup.timezoneLabel': '时区',
+  'popup.timezoneRefresh': '立即探测出口时区',
+  'popup.timezoneSyncFailed': '同步失败',
+  'popup.timezoneNone': '未同步',
   'popup.nodeLoading': '正在读取节点…',
   'popup.nodeSwitching': '正在切换…',
   'popup.nodeCurrent': '当前',
@@ -527,6 +588,55 @@ const ZH: Record<MessageKey, string> = {
   'options.subsNeedsController': '连不上控制端。请先保存上面的控制端设置。',
   'error.subsUpdateFailed':
     '更新「{name}」失败，内核拒绝了这次请求 —— 可能是订阅地址访问不通。',
+
+  // ---- 时区同步（V0.9） ----
+  'options.tzTitle': '时区同步',
+  'options.tzTag': '需站点授权',
+  'options.tzDesc':
+    '让下面这些站点看到的是代理出口所在地的时区，而不是这台电脑的。只在代理开着时生效 —— 关掉代理时，出口本来就是你的真实位置。',
+  'options.tzEnable': '跟随代理出口',
+  'options.tzLocaleEnable': '语言也跟随出口',
+  'options.tzLocaleHint':
+    '改写 navigator.language 与 Accept-Language 请求头。目标站点的界面语言可能随之切换。',
+  'options.tzHosts': '站点',
+  'options.tzHostsHint': '一行一个域名。子域名自动包含。',
+  'options.tzHostsPlaceholder': 'chatgpt.com',
+  'options.tzDetected': '当前探测到',
+  'options.tzNever': '尚未探测',
+  'options.tzNoLocale': '语言未同步',
+  'options.tzSync': '立即探测',
+  'options.tzSyncing': '探测中…',
+  'options.checkRun': '检查已打开的页面',
+  'check.featureOn': '时区同步已开启',
+  'check.featureOff': '时区同步没有开启',
+  'check.hostsFilled': '站点清单已填写',
+  'check.hostsEmpty': '站点清单是空的',
+  'check.hostMatched': '{host} 在清单里',
+  'check.noTarget': '清单里的站点一个都没打开 —— 先打开一个再检查',
+  'check.permitted': '已获得该站点的访问权限',
+  'check.notPermitted': '还没有该站点的访问权限，点「授予访问权限」',
+  'check.proxyOn': '代理正在运行',
+  'check.proxyOff': '代理没开，页面走的是真实出口',
+  'check.applied': '页面已生效：{actual}',
+  'check.needsReload': '页面仍是 {actual}，应为 {expected} —— 刷新即可',
+  'check.unreadable': '读不到页面的值，访问权限可能刚被撤销',
+  'options.tzGrant': '授予访问权限',
+  'options.tzGranted': '已授权',
+  'options.tzNeedsPermission': '还缺站点访问权限，功能不会生效。',
+  'options.tzNeedsProxy': '请先打开代理 —— 否则没有「出口」可探测。',
+  'options.tzProbeNote':
+    '探测会经代理向 ipinfo.io 发一次请求，该服务会看到你的出口 IP。除此之外不向本机之外存任何东西。',
+  'options.tzReloadNote': '已经打开的标签页要刷新才会生效。',
+  'error.timezoneProbeFailed': '探测出口时区失败（{reason}）。代理本身不受影响。',
+  'error.timezoneInvalidZone': '定位服务返回了一个本浏览器不认的时区：{zone}',
+  'error.timezonePermissionRequired':
+    'LostProxy 没有下面这些站点的访问权限。到设置页点一次「授予这些站点的访问权限」。',
+  'error.timezoneProxyOff': '代理没开，没有「出口」可探测。请先打开代理。',
+  'error.timezoneNoHosts': '站点清单是空的，注入不会发生在任何地方。请先填一个域名。',
+  'validation.tzLocaleEnabled': '语言同步开关的值不合法。',
+  'validation.tzEnabled': '时区同步开关的值不合法。',
+  'validation.tzHostInvalid': '不是合法域名：{host}',
+  'validation.tzHostsTooMany': '站点太多（{count}），上限是 {max}。',
 }
 
 const DICTIONARIES: Record<Locale, Record<MessageKey, string>> = { en: EN, zh: ZH }

@@ -55,6 +55,11 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
       primaryGroup: 'Proxy',
       routingMode: 'global',
       directRules: [],
+      timezoneSyncEnabled: false,
+      localeSyncEnabled: false,
+      // 与 DEFAULT_SETTINGS 保持一致：预填一个站点。留空会让「显示时区」
+      // 那几条用例落进「清单为空」这一档，测的就不是它们想测的东西了。
+      timezoneHosts: ['chatgpt.com'],
     },
     coreStatus: 'online',
     coreVersion: 'v1.19.0',
@@ -64,6 +69,7 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
     lastError: null,
     group: null,
     groupError: null,
+    timezone: null,
     ...overrides,
   }
 }
@@ -895,3 +901,102 @@ describe('V0.8 状态标签吞吐组件', () => {
 })
 
 
+
+describe('V0.9 状态页显示时区', () => {
+  it('功能未启用时整行隐藏', async () => {
+    // 一个从没开过的功能不该在面板上留一行看不懂的东西。
+    nextSnapshot = snapshot({ timezone: null })
+    await mountPopup()
+
+    expect(document.querySelector<HTMLElement>('#timezone-label')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('#timezone-text')?.hidden).toBe(true)
+  })
+
+  it('显示探测到的时区', async () => {
+    nextSnapshot = snapshot({
+      timezone: {
+        zone: 'Asia/Tokyo',
+        country: 'JP',
+        locale: 'ja-JP',
+        exitIp: '103.1.2.3',
+        at: Date.now(),
+        node: 'JP-01',
+        error: null,
+      },
+    })
+    await mountPopup()
+
+    expect(document.querySelector<HTMLElement>('#timezone-label')?.hidden).toBe(false)
+    const value = document.querySelector<HTMLElement>('#timezone-text')
+    expect(value?.hidden).toBe(false)
+    expect(value?.textContent).toBe('Asia/Tokyo')
+  })
+
+  it('🔴 启用了但还没探测到时要明说', async () => {
+    /*
+     * 这一格最要紧：功能开着，而页面上的时区仍是本机的。
+     * 显示破折号或空值，用户会以为它已经在工作了 ——
+     * 而那时候他的时区和出口 IP 正互相矛盾。
+     */
+    nextSnapshot = snapshot({
+      timezone: { zone: null, country: null, locale: null, exitIp: null, at: 0, node: null, error: null },
+    })
+    await mountPopup()
+
+    expect(document.querySelector('#timezone-text')?.textContent).toBe('not synced')
+  })
+
+  it('🔴 站点清单为空时也隐藏', async () => {
+    /*
+     * 那种状态下没有任何站点会被注入，显示一个时区名是不成立的承诺。
+     * 与「未启用」归进同一档：面板只该讲已经生效的事。
+     */
+    nextSnapshot = snapshot({
+      timezone: {
+        zone: 'Asia/Tokyo',
+        country: 'JP',
+        locale: 'ja-JP',
+        exitIp: '103.1.2.3',
+        at: Date.now(),
+        node: 'JP-01',
+        error: null,
+      },
+      settings: { ...snapshot().settings, timezoneSyncEnabled: true, timezoneHosts: [] },
+    })
+    await mountPopup()
+
+    expect(document.querySelector<HTMLElement>('#timezone-text')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('#timezone-label')?.hidden).toBe(true)
+  })
+})
+
+describe('🔴 每种 coreStatus 都有对应的渲染（矩阵）', () => {
+  /*
+   * `CoreStatus` 是三个取值，而 `renderCore` 是一串 if-else ——
+   * 新增一个值时不会编译失败，也不会有人提醒。表驱动把三格钉死。
+   *
+   * 这里测的是**三态在 UI 上的区别**，那正是 ADR-23 的核心：
+   * unreachable 不是错误（客户端可能只开 named pipe），所以它显示一句
+   * 解释（core-note），而 error 是真配置错了，不能带那句解释。
+   * 两者混为一谈会让一半用户永久看到一条假的故障提示。
+   */
+  const CASES = [
+    // online 那一格是「标签 · 版本号」拼起来的，所以用包含断言；
+    // 另外两格是完整的一句，但包含断言对它们同样成立，且不会因为
+    // 将来给文案加前缀而误红。
+    { status: 'online' as const, text: 'v1.19.0', noteShown: false },
+    { status: 'error' as const, text: 'Mihomo controller misconfigured', noteShown: false },
+    { status: 'unreachable' as const, text: 'Core status unavailable', noteShown: true },
+  ]
+
+  it.each(CASES)('$status', async ({ status, text, noteShown }) => {
+    nextSnapshot = snapshot({
+      coreStatus: status,
+      coreVersion: status === 'online' ? 'v1.19.0' : null,
+    })
+    await mountPopup()
+
+    expect(document.querySelector('#core-text')?.textContent).toContain(text)
+    expect(document.querySelector<HTMLElement>('#core-note')?.hidden).toBe(!noteShown)
+  })
+})

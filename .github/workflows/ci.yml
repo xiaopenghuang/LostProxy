@@ -33,6 +33,9 @@ jobs:
       # ci 而非 install：严格按 lockfile 装，不接受版本漂移。
       - run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
       - name: Typecheck
         run: npm run typecheck
 

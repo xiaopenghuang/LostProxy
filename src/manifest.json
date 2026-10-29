@@ -1,16 +1,23 @@
 {
   "manifest_version": 3,
   "name": "LostProxy",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "description": "Browser-scoped proxy. Routes only this browser through your local Mihomo core. Does not modify Windows system proxy, TUN or routes.",
   "minimum_chrome_version": "120",
   "permissions": [
     "proxy",
     "storage",
-    "privacy"
+    "privacy",
+    "scripting",
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "https://ipinfo.io/*",
+    "https://ipapi.co/*"
+  ],
+  "optional_host_permissions": [
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"

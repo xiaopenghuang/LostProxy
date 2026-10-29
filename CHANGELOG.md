@@ -8,6 +8,206 @@ Each version section below is extracted by `.github/workflows/release.yml` and b
 
 ---
 
+## v0.8.0
+
+语言也可以跟着出口走：代理到洛杉矶，请求头里的 `Accept-Language` 和页面读到的
+`navigator.language` 都变成 `en-US`，而不是留在 `zh-CN`。
+**默认关闭，是独立于时区的第二个开关。**
+Language can now follow the exit too: route through Los Angeles and both the
+`Accept-Language` header and the page's `navigator.language` read `en-US`.
+**Off by default, a separate switch from timezone sync.**
+
+### 新增 / New
+
+- **请求头语言跟随出口。** 用 `declarativeNetRequest` 把**你列出的站点**的
+  `Accept-Language` 改成与出口国家一致的值。这是服务端不执行任何 JS 就能读到的
+  信号，JS 层改不到它 —— v0.7.0 的时区伪装缺的正是这一半。
+  **`Accept-Language` follows the exit.** A DNR rule rewrites it per listed site.
+  Servers read this header without running any script; the JS-only approach could not
+  reach it.
+
+- **页面语言一起改。** `navigator.language`、`navigator.languages` 与 `Intl` 的默认
+  locale 同步过去，所以日期格式会从 `2026/10/29` 变成 `10/29/2026`、24 小时制变成
+  12 小时制 —— 只改 `navigator.language` 而不动 `Intl`，留在页面上的仍然是中国习惯。
+  **Page locale changes with it**, including the `Intl` default — which is what decides
+  between `2026/10/29` and `10/29/2026`, 24-hour and 12-hour.
+
+- **自检。** 设置页的「检查已打开的页面」逐项回答"为什么没生效"：功能开没开、
+  清单填没填、目标站点开没开、权限给没给、代理在不在，最后**在页面里实测一次**
+  时区。最后这一项最要紧 —— 配置全对而页面没生效是最常见的情况（改完没刷新），
+  只看配置的自检会给出一个假的"一切正常"。
+  **Self-check.** One button walks through every prerequisite and then reads the
+  actual timezone out of the page. That last step matters: "configured correctly but
+  not applied" is the common case, and a config-only check would call it healthy.
+
+- **节点缓存。** 同一个节点第二次连上时复用上次的探测结果，一次请求都不发。
+  顺带缓解限流 —— 免费地理服务按请求方 IP 计数，而出口是共享的节点 IP。
+  **Per-node cache.** Reconnecting to a known node reuses its last result with zero
+  requests, which also relieves rate limiting on the shared exit IP.
+
+- **popup 上可以立即探测**，不用回设置页；换节点后少两次点击。
+  **Detect from the popup**, so following a node change takes two clicks instead of four.
+
+- **常见站点一键填入**（ChatGPT / Claude / Gemini / Grok）。只写进输入框，
+  不保存、不替你勾开关 —— 它省的是打字，不是决定。
+  **One-click site presets.** They fill the field only; saving stays your call.
+
+- **国家到语言是一张内置表**（约 90 个出口地区），查不到时**只同步时区**。
+  猜一个语言比不改更容易被识破：真实用户不会同时具备「冷门国家」与「英文浏览器」。
+  **A built-in country→locale table** (~90 regions). Unknown countries fall back to
+  timezone-only, because guessing a language is more identifying than leaving it alone.
+
+### 说明 / Notes
+
+- 🔴 **语言默认关闭，与时区分开。** 两者的收益结构不同：时区修的是一个真实存在的
+  矛盾（出口在洛杉矶、浏览器报上海），关掉它只是把矛盾留着；而语言是把一项本来不
+  矛盾的东西改掉 —— 中文浏览器配洛杉矶出口在真实用户里大量存在，本身不是破绽。
+  换句话说，时区是修 bug，语言是改身份。后者的收益不确定，代价看得见。
+  **Language is off by default and separate.** Timezone sync fixes a real contradiction;
+  language rewriting changes something that was never wrong on its own. The former is a
+  bug fix, the latter is an identity change — smaller expected gain, visible cost.
+
+- ⚠️ **界面可能变成英文。** `Accept-Language` 正是服务端选择语言的依据。
+  账户里已有的语言偏好若存在服务端，可能不受影响 —— 这一点**尚未实测**。
+  **The UI may switch to English.** `Accept-Language` is what the server uses to pick a
+  language. A server-side account preference may override it; **untested**.
+
+- 🔴 **规则会真正改写你的出站请求头**，所以它的清理比功能本身更要紧。关掉功能、
+  关掉语言开关、关掉代理、清空清单、或国家查不到 —— 五条路径都会把规则删干净，
+  浏览器启动时还会再对齐一次。规则的寿命比页面长，漏掉任何一条都会变成
+  「功能已关，请求头还在被改」。
+  **The rules really do rewrite your outbound headers**, so teardown matters more than
+  setup: five paths clear them and startup re-aligns. Rules outlive pages.
+
+- **新增权限 `declarativeNetRequest`**（Chromium 侧是 `declarativeNetRequestWithHostAccess`，
+  语义为「只在已有站点授权时生效」）。它只在你说「授予访问权限」之后、且只对清单里的
+  域名起作用。
+  **New permission:** `declarativeNetRequest` (`declarativeNetRequestWithHostAccess` on
+  Chromium), scoped to the origins you explicitly grant.
+
+- **Worker 仍然不覆盖**，与 v0.7.0 相同。
+
+### 修复 / Fixed
+
+- 🔴 **探测请求不再受直连规则影响。** 之前如果直连清单里写了 `ipinfo.io`、
+  `ipapi.co` 或 `*.io`，探测会从本机发出 —— 测到的是**你自己的时区**，
+  而功能会把它当成"出口所在地"注入页面。症状是「同步了，但同步的是本地时间」，
+  比不同步更糟，因为它覆盖掉了本来还对的旧值。两个平台都修了：Chromium 在
+  生成的 PAC 里、Firefox 在 `proxy.onRequest` 里，都在用户规则**之前**判断。
+  **The probe no longer follows your direct rules.** A matching rule used to send the
+  probe out unproxied, so it measured *your* timezone and the add-on injected that as
+  the exit's. Fixed on both platforms, ahead of the user rule.
+
+- 🔴 **快照过期时先注入、再刷新。** 之前是「先探测再注入」，而探测最长 7 秒 ——
+  等它回来页面早就跑完，注入写进去也没人读了。等于每过一个 TTL（10 分钟）
+  就有一次注入注定失败，用户看到的是「换节点之后时区就不好使了」。
+  现在用旧值立即注入，刷新放到后台。代价是可能注入一个过期的值，但那比
+  「完全没有」好：没有注入意味着页面拿到真实时区，与已经变了的 IP 组合同样
+  矛盾，而且用户会以为功能坏了。
+  **Inject first, refresh in the background.** Probing took up to 7s, so the injection
+  always lost the race; every TTL meant one guaranteed miss. Stale values now go in
+  immediately and are refreshed afterwards.
+
+- **请求头规则不再误伤同前缀的第三方域名。** 锚点从 `||example.com` 改为
+  `||example.com^`：`.` 不是分隔符，所以 `example.com.evil.tld` 不再命中，
+  而 `api.example.com` 仍然命中。
+  **Header rules no longer leak onto look-alike domains** (`||domain^`).
+
+- **规则同步串行化。** 「读现有规则 → 算差量 → 写回」在多个标签页同时导航时
+  会并发执行，后写的覆盖先写的、而两次都返回成功。现在走一条队列。
+  **Rule syncing is serialised**, so concurrent tabs can no longer drop an update.
+
+## v0.7.0
+
+时区可以跟着代理出口走了：代理到日本节点，ChatGPT 那边看到的就是日本时区。
+默认关闭，首次使用需授权一个站点。
+Timezone can now follow the proxy exit: route through a Japanese node and ChatGPT
+sees a Japanese timezone. Off by default; one site grant to turn on.
+
+### 新增 / New
+
+- **时区同步。** 扩展经代理请求一次 `ipinfo.io` 拿到出口 IP 的 IANA 时区，
+  然后在**你列出的站点**上，于页面脚本执行之前把 `Date` 与 `Intl` 的时区改掉。
+  原先做同一件事要另装一个改时区的扩展，且每次换节点都得手动按 IP 重设。
+  **Timezone sync.** One request through the proxy yields the exit's IANA zone; the
+  extension then rewrites `Date` and `Intl` before page scripts run, on the sites you list.
+
+- **换节点自动跟上。** 快照过期（10 分钟）或你点「立即探测」时就重测一次，
+  不需要回设置页手动改。
+  **Follows node changes.** Re-probes when the cached zone goes stale, or on demand.
+
+- **Popup 状态页显示当前时区**，与出口节点并列。
+  **The popup shows the current timezone** next to the exit node.
+
+### 说明 / Notes
+
+- 🔴 **默认关闭，且不会自动打开。** 这是本项目第一个主动向第三方发请求、
+  且在别人页面里执行脚本的功能。关着的时候它不探测、不注入、不多一个请求 ——
+  行为与 v0.6.0 完全一致。
+  **Off by default and never self-enables.** It is the first feature that talks to a
+  third party and runs script in other pages; while off, behaviour is identical to v0.6.0.
+
+- **只改 JS 读到的值，不改 IP**，也不覆盖 Worker，更不承诺"防指纹"。
+  它的用途是让代理出口和时区不互相矛盾。详见 `DESIGN.md`。
+  **Changes what JS reads, not your IP.** Workers are not covered and it makes no
+  anti-fingerprinting claim; the point is to stop the exit and the timezone contradicting
+  each other.
+
+- **已经打开的标签页要刷新**，注入只发生在页面开始加载时。
+  **Open tabs need a reload** — injection happens at navigation start.
+
+- **站点清单即作用域。** 留空则任何站点都不会被改动，扩展不会因为清单为空
+  就"对所有网站生效"；此时「立即探测」也会被拒绝，因为没有可注入的对象。
+  **The site list is the scope.** An empty list changes nothing rather than
+  everything, and detection is refused in that state for the same reason.
+
+### 修复 / Fixed
+
+- 🔴 **「直连」档实际上会把所有流量送进代理。** 这是 V0.4 引入三档分流时
+  留下的缺口：`buildProxyConfig` 只认 `smart`，`direct` 落到默认的
+  `fixed_servers`，于是选中这一档后**全部流量照走代理**，而 UI 上写着
+  「本浏览器直连。代理配置保留但不使用。」
+
+  没有任何症状 —— 浏览器不报错，速度也没有异常（用户本来就在用那个节点），
+  唯一的后果是他相信了一个假的结论，而这正是这个项目最不能出的事。
+  两个平台都缺这一支，现在各自补上（Chromium `mode: 'direct'`，
+  Firefox `proxyType: 'none'`），并修正状态比对：否则打开这一档会
+  **每次**都报「状态不一致」，而那其实正是我们写进去的配置。
+  **The "Direct" tier was routing everything through the proxy** — the branch had
+  never been implemented on either platform. Fixed, along with the state comparison
+  that would otherwise flag the correct config as mismatched.
+
+### 内部 / Internals
+
+- Firefox 的数据声明从 `required: ["none"]` 改为
+  `required: ["none"]` + `optional: ["locationInfo"]`：探测会传输出口 IP，
+  而功能默认关闭，所以它属于"用户可选"，不是安装条件。授权时一并请求同意。
+  Firefox now declares `optional: ["locationInfo"]` alongside `required: ["none"]`,
+  and asks for that consent in the same gesture that grants site access.
+
+- 新增 `scripting` 权限与 `https://ipinfo.io/*`；两个平台都把全站注入声明为
+  `optional_host_permissions`，实际只索取你列出的站点。
+  Adds `scripting` and the probe host; full-site access stays optional on both platforms.
+
+- 注入函数经 `executeScript` 序列化到页面执行，因此必须完全自包含。
+  这条由两级测试守着：源码级在独立 vm 上下文里跑，产物级从 minify 后的
+  bundle 里抠出函数再跑一遍。
+  The injected function must survive serialisation, checked both at source level and
+  against the minified bundle.
+
+- 引入 Biome 做静态检查，**只开 lint、不开 formatter** —— 后者会把整个
+  仓库 diff 一遍，淹没真正的改动。规则是精选的：只覆盖 `tsc` 抓不到、
+  但会真出问题的那几类（未使用变量/导入、隐式 `any`、浮空 promise、
+  全局 `isFinite` 的隐式类型转换、不安全的可选链），不启用会与既有风格
+  打架的规范类规则。CI 与发布流程各加一道闸门。
+  Adopted Biome for linting only (no formatter). The rule set is deliberately narrow:
+  it covers what `tsc` cannot catch rather than enforcing style.
+
+- 顺带清掉 `scripts/resize-icon.mjs` 里两个真问题：一个已失效的
+  `--no-center` 参数（自动居中早已撤掉），以及一处可为 `const` 的 `let`。
+
+---
+
 ## v0.6.0
 
 Popup 里多了一屏「看得见的流量」：实时连接、上下行速率与迷你曲线、一键选最快、

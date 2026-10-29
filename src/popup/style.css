@@ -1071,3 +1071,28 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* 时区行右侧的刷新按钮（V0.8.0）。
+   做得很小、很低，因为它是一个"顺手纠正"的动作，不是主操作。 */
+.tz-refresh {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 2px;
+  color: inherit;
+  opacity: 0.55;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.tz-refresh:hover {
+  opacity: 1;
+}
+
+.tz-refresh[disabled] {
+  opacity: 0.3;
+  cursor: default;
+}

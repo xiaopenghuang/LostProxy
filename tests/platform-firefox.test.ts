@@ -72,6 +72,27 @@ describe('buildProxyConfig', () => {
     expect(buildProxyConfig(settings).proxyType).toBe('manual')
   })
 
+  it('🔴 uses proxyType: none for the direct tier', () => {
+    /*
+     * 这一档**曾经没有实现**：函数恒返回 manual，于是「直连」实际把全部
+     * 流量送进代理，而 UI 写着「本浏览器直连。代理配置保留但不使用。」
+     *
+     * `none` 与 `clear()` 不是一回事（ADR-18）：那个是把控制权还给浏览器，
+     * 这个是扩展仍持有控制权、按用户要求强制直连。
+     */
+    const value = buildProxyConfig({ ...settings, routingMode: 'direct' })
+    expect(value.proxyType).toBe('none')
+  })
+
+  it('direct tier carries no proxy address at all', () => {
+    // 带了地址就意味着内核那边还会被连上 —— 与"不使用代理"自相矛盾。
+    const value = buildProxyConfig({ ...settings, routingMode: 'direct' })
+    expect(value.http).toBeUndefined()
+    expect(value.ssl).toBeUndefined()
+    expect(value.socks).toBeUndefined()
+    expect(value.autoConfigUrl).toBeUndefined()
+  })
+
   it('🔴🔴 always sets httpProxyAll: true', () => {
     /*
      * 这是本文件最重要的一条。
@@ -407,6 +428,31 @@ describe('readProxyState', () => {
     expect((await firefox.readProxyState({ ...settings, proxyPort: 1080 })).matchesExpected).toBe(
       false,
     )
+  })
+
+  it('🔴 recognises its own direct configuration', async () => {
+    /*
+     * 少了这条，打开直连档会**每次**都报「状态不一致」——而那正是我们
+     * 自己刚写进去的配置。永远为红的告警比没有告警更糟。
+     */
+    const direct = { ...settings, routingMode: 'direct' as const }
+    await firefox.applyProxy(direct)
+    const inspection = await firefox.readProxyState(direct)
+
+    expect(inspection.matchesExpected).toBe(true)
+    expect(inspection.mode).toBe('none')
+  })
+
+  it('🔴 does not accept a proxied browser as direct', async () => {
+    /*
+     * 反方向，也是最要紧的一面：用户选了直连、浏览器却在走代理。
+     * 这正是「UI 说直连、流量在绕道」的检测点 —— 漏了它，这个 bug
+     * 即使写入那半边修好了也不会有人察觉。
+     */
+    await firefox.applyProxy(settings) // settings 是 global → manual
+
+    const inspection = await firefox.readProxyState({ ...settings, routingMode: 'direct' })
+    expect(inspection.matchesExpected).toBe(false)
   })
 
   it('reports a mismatch when the browser is on system proxy', async () => {
@@ -1197,5 +1243,38 @@ describe('契约', () => {
     'unlockWebRtcPolicy',
   ])('implements %s', (method) => {
     expect(typeof firefox[method as keyof typeof firefox]).toBe('function')
+  })
+})
+
+describe('🔴 探测域名不受直连规则影响（V0.8.1）', () => {
+  /*
+   * Firefox 不走 PAC，所以上面那条 Chromium 的修复在这里需要单独实现 ——
+   * 而两处的判断必须一致：不一致的表现是「两个平台的用户看到不同的时区」，
+   * 这种差异在真机上极难发现。
+   *
+   * 症状同 Chromium：探测命中直连 → 从本机发出 → 测到本机时区 →
+   * 被当成"出口所在地"注入页面，覆盖掉本来还对的旧值。
+   */
+  const rules = ['*.io', 'ipinfo.io', 'ipapi.co']
+
+  it('ipinfo.io 即使命中直连规则也返回代理', () => {
+    // 返回数组 = 代理链路（末尾还有 fail-closed 的 null）。
+    expect(Array.isArray(decideRoute(DEFAULT_SETTINGS, rules, 'https://ipinfo.io/json'))).toBe(true)
+  })
+
+  it('备用源同样走代理', () => {
+    expect(Array.isArray(decideRoute(DEFAULT_SETTINGS, rules, 'https://ipapi.co/json/'))).toBe(true)
+  })
+
+  it('子域也走代理', () => {
+    expect(
+      Array.isArray(decideRoute(DEFAULT_SETTINGS, rules, 'https://api.ipinfo.io/json')),
+    ).toBe(true)
+  })
+
+  it('同后缀的其它域名仍然按规则直连', () => {
+    // 保护只针对探测域名本身 —— 顺手把整个 *.io 都改成走代理，
+    // 会让用户配的直连规则静默失效。
+    expect(decideRoute(DEFAULT_SETTINGS, rules, 'https://example.io/')).toEqual({ type: 'direct' })
   })
 })

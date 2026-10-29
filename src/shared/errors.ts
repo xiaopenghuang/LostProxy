@@ -171,6 +171,56 @@ export const errors = {
     makeError('SUBS_UPDATE_FAILED', 'error.subsUpdateFailed', { name }),
 
   /**
+   * V0.9：探测出口时区失败。
+   *
+   * 文案取向是**降低严重感**：代理本身是好的，坏的只是时区没跟上。
+   * 一条红色告警会让用户以为网络出了故障，而他一旦按"代理坏了"去排查
+   * 就会往完全错误的方向走。
+   *
+   * `reason` 只放网络层描述（超时、DNS、非 2xx），**不得**放请求 URL 之外
+   * 的任何东西 —— 这里没有凭据，但守住这条线可以避免将来有人顺手加进来。
+   */
+  timezoneProbeFailed: (reason: string): NormalizedError =>
+    makeError('TZ_PROBE_FAILED', 'error.timezoneProbeFailed', { reason }),
+
+  /**
+   * V0.9：服务返回的时区名 `Intl` 不认。
+   *
+   * 带上原值：这是个「不可能发生」的分支，一旦发生，用户报给我们时
+   * 那串字符就是唯一的线索。它来自第三方响应，不含用户数据。
+   */
+  timezoneInvalidZone: (zone: string): NormalizedError =>
+    makeError('TZ_INVALID_ZONE', 'error.timezoneInvalidZone', { zone }),
+
+  /**
+   * V0.9：缺注入权限。
+   *
+   * 与 routingPermissionRequired 同一类（用户能自己修），但**修法不同**：
+   * 那条只能引导去 about:addons，这条在设置页点一下就能重新请求。
+   * 文案必须指到那个按钮上。
+   */
+  timezonePermissionRequired: (): NormalizedError =>
+    makeError('TZ_PERMISSION_REQUIRED', 'error.timezonePermissionRequired'),
+
+  /**
+   * V0.9：代理关着，没有出口可探测。
+   *
+   * 这不是故障 —— 用户只是还没开代理。文案必须是**指路**而不是报警，
+   * 与 groupNotConfigured 同一个取向。
+   */
+  timezoneProxyOff: (): NormalizedError =>
+    makeError('TZ_PROXY_OFF', 'error.timezoneProxyOff'),
+
+  /**
+   * V0.9：站点清单为空，没有可注入的对象。
+   *
+   * 与 timezoneProxyOff 分开：那条要用户去开代理，这条要用户去填域名。
+   * 合成一条会让提示指向错误的下一步。
+   */
+  timezoneNoHosts: (): NormalizedError =>
+    makeError('TZ_NO_HOSTS', 'error.timezoneNoHosts'),
+
+  /**
    * 设置校验失败。
    *
    * 只报**第一条**问题：NormalizedError 只能携带一个 key，
@@ -194,6 +244,32 @@ export function describeThrown(thrown: unknown): string {
   if (thrown instanceof Error) return thrown.message
   if (typeof thrown === 'string') return thrown
   return 'unknown error'
+}
+
+/**
+ * 把 storage 里的任意值宽容还原成 `NormalizedError`；认不出就返回 null。
+ *
+ * 与 `makeError` 方向相反：那个构造、这个还原。放在同一个文件里，是因为
+ * 两者必须对同一套字段达成一致 —— 分成两处，某天给 `NormalizedError`
+ * 加字段时只会改一边，而症状是「持久化的告警重启后丢了最后那段信息」。
+ *
+ * ⚠️ 宽容是必须的：这段数据会从 chrome.storage.local 读回来，它可能来自
+ *    旧版本、也可能被手工改坏。恢复失败不能让 Service Worker 起不来。
+ *    缺 `key` 的记录直接丢弃 —— 没有 key 就无法翻译，留着也显示不出来。
+ */
+export function coerceNormalizedError(raw: unknown): NormalizedError | null {
+  if (typeof raw !== 'object' || raw === null) return null
+
+  const candidate = raw as Partial<NormalizedError>
+  if (typeof candidate.code !== 'string' || typeof candidate.key !== 'string') return null
+
+  const restored: NormalizedError = {
+    code: candidate.code as ErrorCode,
+    key: candidate.key as MessageKey,
+    message: typeof candidate.message === 'string' ? candidate.message : '',
+    at: typeof candidate.at === 'number' ? candidate.at : 0,
+  }
+  return candidate.params !== undefined ? { ...restored, params: candidate.params } : restored
 }
 
 /**

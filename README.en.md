@@ -48,6 +48,10 @@ those, and the extension only decides which traffic goes through the proxy.
 - Keyboard shortcut (`Alt+Shift+L`) to toggle the proxy for this browser
 - Locks WebRTC in step, so UDP cannot bypass the HTTP proxy and expose the
   real IP
+- Timezone and language sync: makes the sites you list see the proxy exit's
+  timezone and language rather than this computer's, including the
+  `Accept-Language` request header, and follows node changes (off by default,
+  needs a per-site grant)
 - Breaks the connection when the proxy is unreachable rather than falling
   back to direct ([reasoning](DESIGN.md#fail-closed))
 - English and Chinese, switchable on the spot
@@ -291,6 +295,50 @@ two subscriptions live at the **same time** rather than switching between them,
 run two Mihomo instances with separate controllers and configs. The cost is two
 processes, and Verge manages only one of them.
 
+### Timezone and language sync
+
+Once you route through an overseas node, the browser still reports this
+computer's timezone and language — a mismatch with the exit IP that is itself a
+tell.
+
+With it on, the add-on asks `ipinfo.io` (through the proxy) for the exit's country
+and timezone, then rewrites `Date` and `Intl` in the sites you listed before their
+scripts run.
+
+Tick **Match the exit language too** (off by default) and it also rewrites
+`navigator.language`, `navigator.languages`, the `Intl` default locale, and the
+`Accept-Language` **request header** for those sites — a signal servers read
+without running any script, which page JS cannot reach.
+
+Two steps, both on the ⚙ settings page:
+
+1. List the domains under **Sites**, one per line. `chatgpt.com` is pre-filled;
+   subdomains are included automatically. **The list is the whole scope: leave it
+   empty and no site is touched** — an empty list does not mean "everywhere".
+2. Press **Grant access** and allow it in the browser prompt.
+
+Step 2 is not optional: rewriting page values means running script there, and
+rewriting headers needs access to that site; the browser only allows both once
+the user has clicked. The add-on asks for the specific sites you listed, not for
+all sites.
+
+Five boundaries:
+
+- **It changes what JS reads and your outbound headers, not your IP.** An exit in
+  Shanghai reporting Tokyo is more conspicuous than no sync at all. Use it with
+  the proxy, not as a privacy tool on its own.
+- **With language sync on, the UI may switch to English.** `Accept-Language` is what
+  sites use to pick a language. A language preference stored on the account may
+  override it — this is **untested**.
+- **Workers are not covered.** Patching the main thread does not reach them.
+- **Open tabs need a reload.** Injection only happens as a page starts loading.
+- **Node changes take up to 10 minutes to follow**, unless you press
+  **Detect now**.
+
+When the exit country is not in the built-in table, **only the timezone is
+synced** and the language is left alone — guessing one is more identifying than
+not touching it. In `direct` mode nothing is probed: there is no exit to detect.
+
 ## Verifying the scope
 
 Open <https://ipinfo.io/ip> in the browser with LostProxy installed **and in
@@ -299,6 +347,7 @@ another browser without it**:
 ```text
 LostProxy off → the two IPs match
 LostProxy on  → the two IPs differ   ← scoping is working
+Direct tier   → matches "off"        ← the direct tier does not leak into the proxy
 ```
 
 Do not compare against a fixed IP, since nodes change. Only whether the two
@@ -321,7 +370,8 @@ then hit **Reload** on the extensions page.
 | `npm run watch` | Rebuild the UI on change |
 | `npm run watch:sw` | Rebuild the background script (separate terminal) |
 | `npm run test` | Unit tests |
-| `npm run verify` | typecheck + test + build |
+| `npm run lint` | Static checks (Biome, lint only — no formatting) |
+| `npm run verify` | lint + typecheck + test + build |
 | `npm run package` | Zip both distributables into `release/` |
 | `npm run sign:firefox` | Submit to AMO and fetch an installable `.xpi` |
 
@@ -347,6 +397,12 @@ passes, along with other non-obvious parts, is covered in
   prevent installation on Android**; if you force it, the toggle reports
   `proxy.settings is not supported on android`
   ([details](DESIGN.md#版本下限与-android), Chinese).
+- Timezone and language sync cover only the main-thread `Date`, `Intl` and
+  `navigator.language` surface. Workers
+  are not affected, and `new Date("…")` parsing of a zone-less string still uses
+  the real zone — that layer is in the engine. It does not change your IP and
+  makes no anti-fingerprinting claim. See
+  [design notes](DESIGN.md#timezone-sync).
 - Whether QUIC / HTTP3 bypasses the proxy, and the real egress IP of private
   windows, are **untested** — open questions rather than verified guarantees.
 

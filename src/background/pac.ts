@@ -30,7 +30,7 @@
  * 那比留在这里更难读。
  */
 
-import { RULE_ALLOWED_PATTERN, LOOPBACK_HOSTS } from '../shared/constants'
+import { RULE_ALLOWED_PATTERN, LOOPBACK_HOSTS, TIMEZONE_PROBE_HOSTS } from '../shared/constants'
 
 /**
  * 把一条规则转成 PAC 里可比较的形式。
@@ -251,17 +251,34 @@ export function buildPacScript(proxyHost: string, proxyPort: number, rules: read
    *   4. 只返回代理，**不附带 "; DIRECT" 兜底**（security.md §4）——
    *      加了兜底等于把 fail-closed 语义作废：代理连不上时会静默直连。
    */
+  /*
+   * 探测域名必须在**用户的直连规则之前**判断。
+   *
+   * 用户完全可能把 `*.io` 或 `ipinfo.io` 加进直连清单（前者是想直连 .io
+   * 站点，后者可能出于隐私考虑）。一旦命中，探测就从本机发出，测到的是
+   * 用户自己的时区 —— 而功能会把它当成正确答案注入页面。这是本项目最坏的
+   * 失败形态：静默，且结果看起来是对的。
+   */
+  const probeHosts = TIMEZONE_PROBE_HOSTS
+
   const script = `function FindProxyForURL(url, host) {
   var PROXY_STR = ${JSON.stringify(proxy)};
   var DIRECT_SUFFIX = ${JSON.stringify(suffixes)};
   var DIRECT_EXACT = ${JSON.stringify(exacts)};
   var LOCAL = ${JSON.stringify(LOOPBACK_HOSTS)};
+  var PROBE = ${JSON.stringify(probeHosts)};
 
   host = ('' + host).toLowerCase();
 
   if (host === 'localhost' || host.indexOf('.') === -1) return 'DIRECT';
   for (var i = 0; i < LOCAL.length; i++) {
     if (host === LOCAL[i]) return 'DIRECT';
+  }
+
+  for (var p = 0; p < PROBE.length; p++) {
+    var ph = PROBE[p];
+    if (host === ph) return PROXY_STR;
+    if (host.length > ph.length && host.slice(-(ph.length + 1)) === '.' + ph) return PROXY_STR;
   }
 
   for (var j = 0; j < DIRECT_EXACT.length; j++) {
@@ -298,4 +315,20 @@ function assertAscii(script: string): string {
     )
   }
   return script
+}
+
+/**
+ * 该主机是否**必须**走代理 —— 目前只有探测域名。
+ *
+ * 与 `buildPacScript` 里那段判断同源。用户的直连规则不该影响"代理出口
+ * 在哪"这个探测：一旦影响，测到的是本机时区，而功能会把它当成正确答案
+ * 注入页面 —— 静默，且结果看起来是对的。
+ *
+ * 单独导出而不是让两个平台各写一遍：Firefox 走 `proxy.onRequest`（不用 PAC），
+ * 但它必须与 PAC 做出同样的判断。两处不一致的表现是「两个平台的用户看到
+ * 不同的时区」，而这种差异极难在测试里被发现。
+ */
+export function isProbeHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/\.$/, '')
+  return TIMEZONE_PROBE_HOSTS.some((probe) => h === probe || h.endsWith(`.${probe}`))
 }

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
+  "files": {
+    "includes": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs", "*.ts"],
+    "ignoreUnknown": true
+  },
+  "formatter": {
+    "enabled": false
+  },
+  "assist": {
+    "enabled": false
+  },
+  "javascript": {
+    "globals": ["chrome", "__LOSTPROXY_PLATFORM__"]
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "none",
+      "correctness": {
+        "noUnusedVariables": "error",
+        "noUnusedImports": "error",
+        "noUndeclaredVariables": "error",
+        "noInvalidUseBeforeDeclaration": "error",
+        "noUnsafeOptionalChaining": "error"
+      },
+      "suspicious": {
+        "noExplicitAny": "error",
+        "noDoubleEquals": "error",
+        "noGlobalIsFinite": "error",
+        "noAsyncPromiseExecutor": "error",
+        "noSkippedTests": "error",
+        "noConsole": "off"
+      },
+      "style": {
+        "useConst": "error",
+        "noParameterAssign": "error",
+        "noNonNullAssertion": "off"
+      },
+      "complexity": {
+        "noBannedTypes": "error",
+        "noUselessContinue": "off"
+      }
+    }
+  }
+}

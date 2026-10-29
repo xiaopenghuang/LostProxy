@@ -17,7 +17,7 @@
  *   若放进某个 async 流程里延迟注册，SW 被唤醒后事件会在监听器挂上之前丢失。
  */
 
-import { handleMessage, handleToggle, reconcile } from './orchestrator'
+import { handleMessage, handleTabLoading, handleToggle, reconcile } from './orchestrator'
 import { registerPlatformListeners, registerProxyErrorListener } from './proxy'
 import { getEnabledState, getSettings, setLastError } from './storage'
 
@@ -82,6 +82,27 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
  */
 chrome.commands?.onCommand.addListener((command) => {
   if (command === 'toggle-proxy') void handleToggle()
+})
+
+/**
+ * 时区注入的触发点（V0.9）。
+ *
+ * 挂在 `tabs.onUpdated` 的 `loading` 阶段，而不是 `complete`：
+ * 注入必须早于页面自己的脚本，`complete` 时一切都已经跑完了 ——
+ * 那会在页面上留下一个「看着同步了、实际没同步」的空操作。
+ *
+ * ⚠️ `loading` 仍然是**导航提交之后**，而 content script 的
+ *    `document_start` 更早。所以这里存在一个极小的竞态：极快的
+ *    内联脚本可能抢在前面读到真实时区。用 `injectImmediately: true`
+ *    把这次注入排到队首，能把窗口压到最小 —— 但压不到零。
+ *    改不了的部分是浏览器 API 的边界，不是实现取舍。
+ *
+ * ⚠️ `tab.url` 在未授予目标站点权限时是 `undefined`，
+ *    `handleTabLoading` 会直接返回 —— 这正是未授权时该有的行为。
+ */
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'loading') return
+  void handleTabLoading(tabId, tab.url)
 })
 
 console.info('[LostProxy] service worker booted')

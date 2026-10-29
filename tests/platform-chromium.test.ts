@@ -103,6 +103,21 @@ describe('buildProxyConfig · 分流模式', () => {
     expect(config.mode).toBe('fixed_servers')
   })
 
+  it('🔴 uses direct mode for direct, and does not fall through to the proxy', () => {
+    /*
+     * 这一档**曾经没有实现**：`needsRuleBasedRouting` 只认 smart，于是
+     * direct 落到下面的 fixed_servers —— 整档变成"全走代理"，而 UI 上
+     * 写着「本浏览器直连。代理配置保留但不使用。」
+     *
+     * 后果无声：用户以为在直连，流量却绕道境外节点，而他看不出任何异常。
+     * 这条断言锁的是「这一档必须有自己的一支」这个事实。
+     */
+    const config = buildProxyConfig({ ...DEFAULT_SETTINGS, routingMode: 'direct' })
+    expect(config.mode).toBe('direct')
+    expect(config.rules).toBeUndefined()
+    expect(config.pacScript).toBeUndefined()
+  })
+
   it('uses pac_script for smart mode with rules', () => {
     expect(smart(['*.edu.cn']).mode).toBe('pac_script')
   })
@@ -224,6 +239,43 @@ describe('🔴 inspectProxy · 期望的 mode 与实际 mode 必须相符', () =
     const inspection = await inspectProxy(settings)
     expect(inspection.matchesExpected).toBe(false)
     expect(inspection.mode).toBe('direct')
+  })
+
+  it('🔴 treats mode: direct as consistent when the user chose direct', async () => {
+    /*
+     * 反向的那一半。少了它，打开直连档会**每次**都报「状态不一致」——
+     * 而那其实正是我们刚写进去的配置。一个永远为红的告警比没有告警更糟：
+     * 它训练用户忽略真正的红。
+     */
+    const direct = { ...DEFAULT_SETTINGS, routingMode: 'direct' as const }
+    await enableProxy(direct)
+    const inspection = await inspectProxy(direct)
+
+    expect(inspection.matchesExpected).toBe(true)
+    expect(inspection.mode).toBe('direct')
+  })
+
+  it('🔴 does not accept a proxied browser as direct', async () => {
+    /*
+     * 这是上面那个 bug 的另一面，也是最要紧的一条：
+     * 用户选了直连，而浏览器实际在走代理 —— 必须被发现。
+     *
+     * 这正是「UI 说直连、流量在绕道」的检测点。漏了它，这个 bug
+     * 即使被修好一半（写入对了但比对没改）也不会有人察觉。
+     */
+    proxySetting.value = {
+      mode: 'fixed_servers',
+      rules: {
+        singleProxy: {
+          scheme: 'http',
+          host: DEFAULT_SETTINGS.proxyHost,
+          port: DEFAULT_SETTINGS.proxyPort,
+        },
+      },
+    }
+
+    const inspection = await inspectProxy({ ...DEFAULT_SETTINGS, routingMode: 'direct' })
+    expect(inspection.matchesExpected).toBe(false)
   })
 })
 

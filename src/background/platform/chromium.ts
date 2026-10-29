@@ -105,6 +105,25 @@ export const WEBRTC_LOCKED_POLICY = 'disable_non_proxied_udp' as const
  */
 export function buildProxyConfig(settings: Settings): chrome.proxy.ProxyConfig {
   /*
+   * 🔴 `direct` 这一档是唯一完全不经过代理的，而它**曾经没有实现**。
+   *
+   * `needsRuleBasedRouting` 只认 smart，于是 direct 落到下面的
+   * `fixed_servers`，整档变成"全走代理" —— 而 UI 上写着「本浏览器直连。
+   * 代理配置保留但不使用。」
+   *
+   * 这正是本项目最不能出的那种错：界面说的与事实相反，且没有任何症状。
+   * 用户以为在直连，流量却绕道境外节点；他既不会看到报错，也不会看到
+   * 速度变化（同一个节点他本来就在用），只会相信一个假的结论。
+   *
+   * 与 `releaseProxy()` 不是一回事（ADR-18）：那条是「扩展不再干预」，
+   * 用 `clear()` 把控制权还回去。这里是**用户明确要求直连**，扩展应当
+   * 持有控制权并强制直连 —— `mode: 'direct'` 正是这个语义。
+   */
+  if (settings.routingMode === 'direct') {
+    return { mode: 'direct' }
+  }
+
+  /*
    * V0.4：smart 模式改用 PAC。
    *
    * 🔴 `mandatory: true` 不可省（security.md §4）。PAC 默认 fail-open ——
@@ -161,6 +180,15 @@ function configMatches(config: chrome.proxy.ProxyConfig | undefined, expected: S
   const expectedConfig = buildProxyConfig(expected)
 
   if (config.mode !== expectedConfig.mode) return false
+
+  /*
+   * direct 档没有 rules 可比，mode 相符就是相符。
+   *
+   * 少了这一句会走到下面的 `config.rules?.singleProxy` 判空并返回 false ——
+   * 于是**每次**打开直连档都会报「状态不一致」，而那其实正是我们写的配置。
+   * 一个永远为红的告警比没有告警更糟：它训练用户忽略真正的红。
+   */
+  if (expectedConfig.mode === 'direct') return true
 
   if (expectedConfig.mode === 'pac_script') {
     // 只比对「脚本里确实出现了我们的代理地址」，不做全文比较 ——

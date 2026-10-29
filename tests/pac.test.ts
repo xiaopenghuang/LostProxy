@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { buildPacScript, sanitizeRule, sanitizeRules } from '../src/background/pac'
+import { buildPacScript, isProbeHost, sanitizeRule, sanitizeRules } from '../src/background/pac'
 
 /**
  * 把生成的脚本当成真的 PAC 来跑，返回 FindProxyForURL 的结果。
@@ -286,5 +286,48 @@ describe('IDN 规则自动转 Punycode', () => {
   it('the script stays ASCII even when given IDN input', () => {
     const script = buildPacScript('127.0.0.1', 7890, ['*.清华.edu.cn', '中文.com'])
     expect([...script].filter((c) => c.charCodeAt(0) > 127)).toEqual([])
+  })
+})
+
+describe('🔴 探测域名必须走代理（V0.8.1）', () => {
+  /*
+   * 直连清单是用户填的，而"放行某个域名"是很自然的诉求 —— 有人会把
+   * `*.io` 加进去想直连这类站点，也有人出于隐私考虑单独放行 `ipinfo.io`。
+   *
+   * 一旦探测请求命中直连规则，它就从本机发出，测到的是用户自己的时区。
+   * 而功能会把那个值当成"出口所在地"注入页面 —— 症状是「同步了，但同步
+   * 的是你自己的时区」，比不同步更糟，因为它覆盖掉了本来还对的旧值。
+   *
+   * 所以这段判断必须排在用户规则之前。
+   */
+  const script = buildPacScript('127.0.0.1', 7890, ['*.io', 'ipinfo.io', '*.co'])
+
+  it.each([
+    ['ipinfo.io', PROXY],
+    ['ipapi.co', PROXY],
+  ])('%s 即使命中直连规则也走代理', (host, expected) => {
+    expect(evaluatePac(script, host)).toBe(expected)
+  })
+
+  it('同后缀的其它域名仍然按用户规则直连', () => {
+    // 保护只针对探测域名本身，不能顺手把整个后缀都改成走代理 ——
+    // 那会让用户配的 *.io 直连规则失效。
+    expect(evaluatePac(script, 'example.io')).toBe('DIRECT')
+    expect(evaluatePac(script, 'something.co')).toBe('DIRECT')
+  })
+
+  it('子域同样走代理', () => {
+    // 探测源换域名时（比如 ipinfo.io → api.ipinfo.io）不该需要改代码。
+    expect(evaluatePac(buildPacScript('127.0.0.1', 7890, ['ipinfo.io']), 'api.ipinfo.io')).toBe(
+      PROXY,
+    )
+  })
+
+  it('相似但不是子域的域名不受影响', () => {
+    // `ipinfo.io.evil.com` 不是 ipinfo.io 的子域。
+    expect(evaluatePac(buildPacScript('127.0.0.1', 7890, []), 'ipinfo.io.evil.com')).toBe(PROXY)
+    // 它本来就走代理（没有规则），这条断言真正守的是 isProbeHost 的边界。
+    expect(isProbeHost('ipinfo.io.evil.com')).toBe(false)
+    expect(isProbeHost('notipinfo.io')).toBe(false)
   })
 })

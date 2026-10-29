@@ -67,6 +67,46 @@ export interface Settings {
    *    拼进 URL 前必须 encodeURIComponent（architecture.md ADR-30）。
    */
   primaryGroup: string
+  /**
+   * 是否启用时区同步（V0.9）。
+   *
+   * 🔴 **默认关闭，且必须如此。** 这是本项目第一个**主动向外发请求**的功能：
+   *    探测出口 IP 要访问第三方地理服务，注入时区要在目标站点执行脚本。
+   *    两者都超出「只写 chrome.proxy」的原始边界，不能被一次升级默认开启。
+   *
+   * 关闭时，扩展的行为与 V0.8 完全一致：不探测、不注入、不多一个请求。
+   */
+  timezoneSyncEnabled: boolean
+  /**
+   * 是否同时把语言改成与出口地区一致（V0.8.0）。
+   *
+   * 🔴 **默认关闭，比时区更严格。** 两者的收益结构不同：
+   *
+   *   - 时区修的是一个**真实存在的不一致**（出口在洛杉矶、浏览器报上海），
+   *     关掉它就等于把矛盾留着；
+   *   - 语言是把一项**本来没有矛盾**的信号改成另一个值。浏览器报中文、
+   *     出口在洛杉矶，这个组合在真实用户里大量存在（洛杉矶的华人），
+   *     它本身不是破绽。
+   *
+   * 换句话说：时区是修 bug，语言是改身份。后者的收益不确定（没有任何证据
+   * 表明语言影响服务端的判断），代价却看得见 —— 它可能让目标站点切换
+   * 界面语言。
+   *
+   * 需要 `timezoneSyncEnabled` 同时开着才有意义：语言依附于同一次探测，
+   * 没有出口就没有"应该用哪种语言"的答案。
+   */
+  localeSyncEnabled: boolean
+  /**
+   * 时区注入的域名清单（V0.9）。
+   *
+   * 存**裸主机名**（`chatgpt.com`），不带 scheme、不带路径，与 `directRules`
+   * 的书写习惯一致。转成匹配模式在 `timezone.ts` 里统一做。
+   *
+   * 为什么是用户可配而不是写死：需要时区一致的站点因人而异（ChatGPT / Claude /
+   * 某个只有自己用的内部系统），写死任何一个都只能服务一部分人。
+   * 而全量注入要 `<all_urls>`，与「默认权限面只有一个回环地址」直接冲突。
+   */
+  timezoneHosts: readonly string[]
 }
 
 /**
@@ -163,6 +203,51 @@ export type ErrorCode =
   | 'LATENCY_TEST_FAILED'
   /** V0.6：订阅更新失败（订阅地址访问不通等） */
   | 'SUBS_UPDATE_FAILED'
+  /**
+   * V0.9：探测出口时区失败。
+   *
+   * 与代理层告警刻意分开：探测失败**不影响代理是否可用**，
+   * 它只是「时区没同步上」。也因此在 UI 上不该用红色告警 ——
+   * 用户的网络是好的，出问题的只是一个附加功能。
+   */
+  | 'TZ_PROBE_FAILED'
+  /**
+   * V0.9：服务返回的时区串无法被 `Intl` 接受。
+   *
+   * 这**不该发生**（ipinfo 返回的是标准 IANA 名），但一旦发生，
+   * 说明我们拿到的东西不能直接塞进 `Intl.DateTimeFormat` ——
+   * 那边的失败方式是抛 RangeError，而它会在页面注入时炸掉整段脚本。
+   * 所以宁可在这里拒绝，也不能把一个无效时区拿去注入。
+   */
+  | 'TZ_INVALID_ZONE'
+  /**
+   * V0.9：缺少向目标站点注入脚本的权限。
+   *
+   * 与 ROUTING_PERMISSION_REQUIRED 同属「用户可自行修复」的一类，
+   * 但修法不同：那条要引导用户去 about:addons 勾选，这条可以在设置页
+   * 一次点击重新请求。
+   */
+  | 'TZ_PERMISSION_REQUIRED'
+  /**
+   * V0.9：代理没开时试图探测，或关掉代理后时区不再有意义。
+   *
+   * 单独一个码而不是复用 TZ_PROBE_FAILED：这不是"探测失败"，是
+   * **没有可探测的东西**。文案要指向"先打开代理"，而前者的文案
+   * 会引导用户去查网络 —— 两件事的排查方向相反。
+   */
+  | 'TZ_PROXY_OFF'
+  /**
+   * V0.9：站点清单为空。
+   *
+   * 这**不是故障**，是「还需要配置一次」—— 与 GROUP_NOT_CONFIGURED 同一个
+   * 取向：文案要指路（去填一个域名），而不是报警。
+   *
+   * 🔴 必须把这条堵在 background 而不是只靠 UI 禁用按钮。
+   *    「清单为空」时探测会照常成功、快照会照常写入，而 `reinjectOpenTabs([])`
+   *    一个站点都不碰 —— 用户看到「已同步」，刷新页面却毫无变化。
+   *    把判定放在唯一的消息入口上，任何调用方都绕不过去。
+   */
+  | 'TZ_NO_HOSTS'
   | 'UNKNOWN'
 
 /**
@@ -231,6 +316,91 @@ export interface SettingsView {
    * 但这个决定是**做出来的**，不是被 `Omit` 自动带过来的。
    */
   primaryGroup: string
+  /** V0.9：时区同步开关。UI 要渲染它。 */
+  timezoneSyncEnabled: boolean
+  /** V0.8.0：语言同步开关。UI 要渲染它，且在时区关闭时表现为不可用。 */
+  localeSyncEnabled: boolean
+  /**
+   * V0.9：时区注入域名清单。UI 的回显与授权按钮都需要它。
+   *
+   * 非敏感 —— 是用户自己填的域名，且它们本来就以明文存在 storage 里。
+   * 但**注意**：这份清单会决定向浏览器索取哪些 host permission，
+   * 所以 UI 在保存前必须让用户看见它具体是什么。
+   */
+  timezoneHosts: readonly string[]
+}
+
+/**
+ * 时区同步的运行时快照（V0.9）。
+ *
+ * 与 `StatusSnapshot` 的其余部分不同，这一份**要持久化** ——
+ * 它记录的是「上一次探测出了什么」，而重测需要一次真实网络往返。
+ * 若只留在内存里，Service Worker 每次被回收（几十秒无操作就会发生）
+ * 都要重新探测一次，那是拿用户的流量换一个不会变的值。
+ *
+ * ⚠️ 也因此它必须能被 `coerceTimezone` 宽容解析：旧版本没有这个键，
+ *    损坏的 JSON 也不能让 SW 起不来。
+ */
+export interface TimezoneSnapshot {
+  /** IANA 时区名，如 `Asia/Tokyo`。null 表示从未探测成功。 */
+  zone: string | null
+  /**
+   * 探测到的出口国家代码（ISO 3166-1 alpha-2，大写），如 `US`、`JP`。
+   *
+   * 存它而不是直接存 locale，是因为两份信息用途不同：
+   *   - `country` 是**事实**，来自探测响应，UI 上可以显示给用户核对；
+   *   - `locale` 是**推导**，来自 `COUNTRY_LOCALE` 表，这张表会随版本变化。
+   *
+   * 分开存，将来改表时旧快照里的 country 仍然是对的，重新推导一次就能
+   * 得到新的 locale；只存 locale 的话，那次改动会连带改掉"当时到底探测到了
+   * 什么"这个事实。
+   */
+  country: string | null
+  /**
+   * 由 `country` 推导出的目标语言，如 `en-US`。
+   *
+   * null 有两种可能，**在 UI 上都表现为"语言不同步"**：
+   *   - 国家查不到（表刻意不求全，见 `shared/locales.ts`）；
+   *   - 探测源没给国家代码。
+   *
+   * ⚠️ 它为 null 时**不阻断时区同步**。两者是同一组地理信号，但时区
+   *    几乎总能拿到，语言常常拿不到 —— 因为缺语言而整个功能不生效，
+   *    等于用一项的不完整否掉另一项的确定结果。
+   */
+  locale: string | null
+  /**
+   * 探测时的出口 IP。
+   *
+   * 存它是为了**可核对**：用户看到「Asia/Tokyo / 103.x.x.x」能自己判断
+   * 这次探测是不是走对了路径。只给时区名的话，一个来自直连出口的错误时区
+   * 看起来和正确结果毫无区别。
+   */
+  exitIp: string | null
+  /** 探测完成时间（Date.now()）。用于 TTL 判定。 */
+  at: number
+  /**
+   * 探测时内核选中的节点名。
+   *
+   * 这是「要不要重测」的主判据：节点换了，出口国家就可能换了，
+   * 而节点名是我们唯一能顺手拿到的变化信号 —— 出口 IP 本身要探测才知道。
+   * null 表示当时读不到（Controller 不可达）。
+   */
+  node: string | null
+  /**
+   * 最近一次探测失败的原因；成功时为 null。
+   *
+   * 🔴 为什么失败要留在快照里，而不是只回给发起那次操作的 UI：
+   *    页面加载时的探测是**静默**的（见 `handleTabLoading`）—— 失败不报错、
+   *    不弹提示，因为一次探测失败不该让正在打开的页面冒出一条无关告警。
+   *    于是如果这里不留痕，用户会看到一个「未同步」和一个无从下手的状态：
+   *    功能开了、授权给了、代理也开着了，它就是不动，而没有任何地方说得清
+   *    为什么。这一格是那条静默路径唯一的出口。
+   *
+   * ⚠️ 失败时 `at` 仍然会被刷新（见 `failedSnapshot`）。这不是笔误：
+   *    不刷新的话快照会一直"过期"，每次页面加载都重试一次 ——
+   *    撞上 429 时那等于自己把自己限流得更狠。
+   */
+  error: NormalizedError | null
 }
 
 /**
@@ -295,6 +465,14 @@ export interface StatusSnapshot {
    *    用不重要的信息覆盖掉最重要的信息，是此方最不想造出的那种 bug。
    */
   groupError: NormalizedError | null
+  /**
+   * V0.9：时区同步的当前状态。
+   *
+   * 🔴 `null` 表示**功能未启用**，与「启用了但还没探测成功」是两件事：
+   *    前者 UI 什么都不该显示，后者要显示「尚未同步」和一个可点的按钮。
+   *    合成一个字段会让未启用的用户看到一条永远同步不上的提示。
+   */
+  timezone: TimezoneSnapshot | null
 }
 
 /** Mihomo `GET /version` 的响应体。 */
@@ -477,3 +655,48 @@ export type ConnectionsResult =
     }
   | { readonly ok: false; readonly error: NormalizedError }
 
+
+/**
+ * 自检的一项结论（V0.8.0）。
+ *
+ * `key` 存的是**文案 key** 而不是人话：判断发生在 background，翻译发生在
+ * UI，两者之间只传中间的语义。这样同一个结论在不同语言下自然正确，
+ * 也让"哪一步没过"变成可以测试的东西 —— 而拼好的句子不行。
+ *
+ * 类型写成 string 而不是 `MessageKey`：`i18n.ts` 引用 `types.ts`，
+ * 反过来引会成环。代价是 UI 那边要断言一次，收益是这张依赖图保持单向。
+ */
+export interface SelfCheckStep {
+  readonly key: string
+  readonly ok: boolean
+  readonly params?: Readonly<Record<string, string | number>>
+}
+
+/**
+ * 在页面上实测到的身份（V0.8.0）。
+ *
+ * 这是自检里唯一**不能靠推断得出**的部分：前面几项问的是"配置对不对"，
+ * 它问的是"页面里现在到底是什么"。两者可能不一致 —— 而那正是用户
+ * 最需要知道的事（"我全配好了，为什么它还是北京时间"）。
+ */
+export interface ObservedIdentity {
+  readonly timezone: string
+  readonly locale: string
+  readonly language: string
+}
+
+/**
+ * 自检报告（V0.8.0）。
+ *
+ * 存在的理由：这个功能的每一种失败都是**静默**的 —— 不报错、不弹窗，
+ * 页面照常打开，只是时区没变。在此之前，想知道"到底卡在哪一步"只有
+ * 一个办法：打开目标页面的控制台手敲几行代码。
+ */
+export interface SelfCheckReport {
+  /** 被检查的页面地址；清单里的站点一个都没打开时为 null。 */
+  readonly url: string | null
+  /** 按执行顺序记录每一步的结论。 */
+  readonly steps: readonly SelfCheckStep[]
+  /** 页面里实测到的值；读不到（没权限、页面已关闭）时为 null。 */
+  readonly observed: ObservedIdentity | null
+}

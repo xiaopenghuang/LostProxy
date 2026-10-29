@@ -24,7 +24,10 @@ import {
   handleGetStatus,
   handleListConnections,
   handleMessage,
+  handleTabLoading,
   handleSaveSettings,
+  handleSelfCheck,
+  handleSyncTimezone,
   handleTestCore,
   handleToggle,
   pickError,
@@ -33,6 +36,7 @@ import {
 import { checkSupported, inspectProxy, type ProxyInspection } from '../src/background/proxy'
 import { needsRuleBasedRouting } from '../src/background/pac'
 import { errors } from '../src/shared/errors'
+import type { MessageKey } from '../src/shared/i18n'
 import {
   getEnabledState,
   getLastError,
@@ -43,7 +47,18 @@ import {
 } from '../src/background/storage'
 import { DEFAULT_SETTINGS } from '../src/shared/constants'
 import type { LevelOfControl, NormalizedError, Settings } from '../src/shared/types'
-import { proxySetting, webRtcSetting } from './setup'
+import {
+  failNextExecuteScript,
+  proxySetting,
+  readDynamicRules,
+  readExecuteScriptCalls,
+  seedDynamicRules,
+  seedMockStore,
+  setGrantedOrigins,
+  setMockExecuteScriptResult,
+  setMockTabs,
+  webRtcSetting,
+} from './setup'
 
 const SECRET = 'sk-orchestrator-secret-must-not-escape'
 
@@ -154,6 +169,63 @@ describe('pickError', () => {
     const result = pickError(null, true, inspection('controllable_by_this_extension', false), okProbe)
     expect(result?.message).toMatch(/not using LostProxy settings/i)
   })
+
+  /*
+   * 🔴 枚举矩阵（V0.9 补）。
+   *
+   * `levelOfControl` 有五个取值（`LevelOfControl` 四个 + 查询失败时的
+   * 'unknown'），而 `pickError` 是一串 if —— **漏掉一个既不会编译失败，
+   * 也不会有任何提示**。三档分流里 `direct` 曾经就是这样漏了六个版本。
+   *
+   * 这张表把「每个取值 × 是否一致」的结论钉死。它的真正价值不在今天这几行，
+   * 而在于将来往 `LevelOfControl` 加一个值时：新值必然出现在类型里，
+   * 而这张表会立刻显示出一格没被覆盖的空缺。
+   *
+   * 断言用 `key` 而不是 `code`：`stateMismatch` 用的是通用码 `UNKNOWN`，
+   * 只看 code 会把「状态不一致」和「其它未知错误」混为一谈。
+   */
+  const LEVEL_MATRIX: ReadonlyArray<{
+    readonly level: LevelOfControl | 'unknown'
+    readonly matches: boolean
+    readonly key: MessageKey | null
+  }> = [
+    // 这两条是「浏览器不让写」，无论当前配置对不对都该报 —— 用户以为开着、
+    // 实际没生效，是这个项目最不能让它静默发生的事。
+    { level: 'not_controllable', matches: true, key: 'error.proxyNotControllable' },
+    { level: 'not_controllable', matches: false, key: 'error.proxyNotControllable' },
+    {
+      level: 'controlled_by_other_extensions',
+      matches: true,
+      key: 'error.proxyControlledByOther',
+    },
+    {
+      level: 'controlled_by_other_extensions',
+      matches: false,
+      key: 'error.proxyControlledByOther',
+    },
+    // 能控、且已经一致：没有可报的。
+    { level: 'controllable_by_this_extension', matches: true, key: null },
+    { level: 'controlled_by_this_extension', matches: true, key: null },
+    // 能控但不一致：这正是「显示开了其实没写进去」。
+    { level: 'controllable_by_this_extension', matches: false, key: 'error.stateMismatch' },
+    { level: 'controlled_by_this_extension', matches: false, key: 'error.stateMismatch' },
+    /*
+     * 查询失败（'unknown'）且比对认为不一致 —— 报。
+     * 注意与写入路径的区别：那边「查询失败」**不阻断写入**（宁可试试）；
+     * 这边是"已经写完了在巡检"，不一致就得说。
+     */
+    { level: 'unknown', matches: false, key: 'error.stateMismatch' },
+    // 查询失败但比对认为一致 —— 没理由报错。
+    { level: 'unknown', matches: true, key: null },
+  ]
+
+  it.each(LEVEL_MATRIX)(
+    '$level（matches=$matches）→ $key',
+    ({ level, matches, key }) => {
+      const result = pickError(null, true, inspection(level, matches), okProbe)
+      expect(result?.key ?? null).toBe(key)
+    },
+  )
 
   it('🔴 does not report a mere core outage as an error', () => {
     // ADR-23：端口上什么都没有，很可能是客户端刻意只开 named pipe
@@ -1209,5 +1281,568 @@ describe('handleToggle（V0.8）', () => {
     // handleToggle 不是消息类型，但走的是 handleEnable —— 确认它真的翻转了状态。
     await handleToggle()
     expect(await getEnabledState()).toBe(true)
+  })
+})
+
+describe('V0.9 时区同步的入口守卫', () => {
+  it('代理没开时拒绝探测', async () => {
+    // 关着代理探测测到的是本机时区，注入进去等于"同步了但同步错了"。
+    seedMockStore({
+      'lostproxy.settings': { ...DEFAULT_SETTINGS, timezoneSyncEnabled: true },
+      'lostproxy.enabled': false,
+    })
+
+    const response = await handleMessage({ type: 'SYNC_TIMEZONE' })
+
+    expect(response.ok).toBe(false)
+    if (!response.ok) expect(response.error.code).toBe('TZ_PROXY_OFF')
+  })
+
+  it('🔴 清单为空时拒绝探测，且一个请求都不发', async () => {
+    /*
+     * 这条是补一个真实缺口：原先清单为空时探测照常成功、快照照常写入，
+     * 而 `reinjectOpenTabs([])` 一个站点都没碰。用户看到「已同步」，
+     * 刷新页面却毫无变化 —— 而"功能正常"与"什么都没做"在他的观察里一样。
+     *
+     * 断言 fetch 没被调用，比只断言返回码更强：它锁住了"连探测都不该发生"，
+     * 而不只是"返回了错误"。
+     */
+    seedMockStore({
+      'lostproxy.settings': { ...DEFAULT_SETTINGS, timezoneSyncEnabled: true, timezoneHosts: [] },
+      'lostproxy.enabled': true,
+    })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await handleMessage({ type: 'SYNC_TIMEZONE' })
+
+    expect(response.ok).toBe(false)
+    if (!response.ok) expect(response.error.code).toBe('TZ_NO_HOSTS')
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('清单为空时不会写入任何时区快照', async () => {
+    // 连"留个半成品状态"都不该发生：否则 popup 上会出现一个不成立的时区名。
+    seedMockStore({
+      'lostproxy.settings': { ...DEFAULT_SETTINGS, timezoneSyncEnabled: true, timezoneHosts: [] },
+      'lostproxy.enabled': true,
+    })
+    vi.stubGlobal('fetch', vi.fn())
+
+    await handleMessage({ type: 'SYNC_TIMEZONE' })
+
+    const stored = await getSettings()
+    expect(stored.timezoneHosts).toEqual([])
+    const snapshot = await chrome.storage.local.get('lostproxy.timezone')
+    expect(snapshot['lostproxy.timezone']).toBeUndefined()
+
+    vi.unstubAllGlobals()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// V0.9 页面加载路径
+// ---------------------------------------------------------------------------
+
+describe('V0.9 handleTabLoading', () => {
+  /*
+   * 这是整个时区功能**唯一真正生效**的路径 —— 前面那些测试测的都是零件，
+   * 只有这里把零件串起来。它有四个前置条件和两种快慢路径，每一格都可能写错，
+   * 而写错的表现是「功能静默不生效」或「每次导航都多一个请求」，
+   * 两者都不会有任何报错。
+   */
+
+  /** 功能打开、代理开着、清单里有 chatgpt.com 的基线状态。 */
+  const READY = {
+    'lostproxy.settings': {
+      ...DEFAULT_SETTINGS,
+      timezoneSyncEnabled: true,
+      localeSyncEnabled: true,
+      timezoneHosts: ['chatgpt.com'],
+    },
+    'lostproxy.enabled': true,
+  }
+
+  const freshSnapshot = {
+    zone: 'Asia/Tokyo',
+    country: 'JP',
+    locale: 'ja-JP',
+    exitIp: '103.1.2.3',
+    at: Date.now(),
+    node: 'JP-01',
+  }
+
+  /** 造一个成功的探测响应，并返回 fetch mock 供断言调用次数。 */
+  function stubProbe(body: unknown = { timezone: 'Asia/Tokyo', ip: '103.1.2.3' }) {
+    const mock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => body,
+    }))
+    vi.stubGlobal('fetch', mock)
+    return mock
+  }
+
+  it('url 缺失时什么都不做', async () => {
+    // tab.url 在未授予目标站点权限时就是 undefined，这正是未授权该有的样子。
+    seedMockStore(READY)
+    const fetchMock = stubProbe()
+
+    await handleTabLoading(1, undefined)
+
+    expect(readExecuteScriptCalls()).toHaveLength(0)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('功能未启用时不注入、也不探测', async () => {
+    seedMockStore({
+      ...READY,
+      'lostproxy.settings': { ...DEFAULT_SETTINGS, timezoneSyncEnabled: false },
+    })
+    const fetchMock = stubProbe()
+
+    await handleTabLoading(1, 'https://chatgpt.com/')
+
+    expect(readExecuteScriptCalls()).toHaveLength(0)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('域名不在清单里时不动', async () => {
+    seedMockStore(READY)
+    const fetchMock = stubProbe()
+
+    await handleTabLoading(1, 'https://example.com/')
+
+    expect(readExecuteScriptCalls()).toHaveLength(0)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('代理关着时不注入', async () => {
+    // 关着代理时页面本来就从真实位置出去，改时区只会制造新的矛盾。
+    seedMockStore({ ...READY, 'lostproxy.enabled': false })
+    const fetchMock = stubProbe()
+
+    await handleTabLoading(1, 'https://chatgpt.com/')
+
+    expect(readExecuteScriptCalls()).toHaveLength(0)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('🔴 快照新鲜时直接注入，一个请求都不发', async () => {
+    /*
+     * 这条是快路径的全部价值：绝大多数导航应当零额外网络请求。
+     * 少了这个分支，用户每开一个页面都会被计一次 ipinfo 调用 ——
+     * 而那正是限流风险的来源。
+     */
+    seedMockStore({ ...READY, 'lostproxy.timezone': freshSnapshot })
+    const fetchMock = stubProbe()
+
+    await handleTabLoading(7, 'https://chatgpt.com/')
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    const calls = readExecuteScriptCalls()
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.args).toEqual([{ zone: 'Asia/Tokyo', locale: 'ja-JP' }])
+    // 用 toMatchObject 而不是 `calls[0]?.target as ...`：
+    // 后者在 calls 为空时会从 undefined 上取属性并抛 TypeError，
+    // 于是失败信息变成一句无关的崩溃，而不是"没注入到预期的标签页"。
+    expect(calls[0]?.target).toMatchObject({ tabId: 7 })
+  })
+
+  it('🔴 快照过期时先注入旧值，刷新放到后台', async () => {
+    /*
+     * 顺序是这次改动的核心：**注入在前，探测在后**。
+     *
+     * 探测最长 7 秒（两个源各 3.5 秒），而这条路径存在的意义就是赶在页面
+     * 脚本之前写完。等探测回来，页面早就跑完了 —— 那时注入只是一个没人
+     * 读的值。旧实现在这里先探测再注入，等于每过一个 TTL 就有一次注入
+     * 注定失败，而用户看到的是"换节点之后时区就不好使了"。
+     */
+    seedMockStore({
+      ...READY,
+      'lostproxy.timezone': {
+        zone: 'Asia/Shanghai',
+        country: 'CN',
+        locale: 'zh-CN',
+        exitIp: '1.1.1.1',
+        at: 0,
+        node: 'CN-01',
+        error: null,
+      },
+    })
+    const fetchMock = stubProbe({ timezone: 'Asia/Tokyo', ip: '103.1.2.3', country: 'JP' })
+
+    await handleTabLoading(7, 'https://chatgpt.com/')
+
+    // 注入发生在这条路径结束之前，用的是快照里那份旧值。
+    expect(readExecuteScriptCalls()[0]?.args).toEqual([
+      { zone: 'Asia/Shanghai', locale: 'zh-CN' },
+    ])
+
+    // 刷新是后台的，但要真的发生。
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+  })
+
+  it('🔴 探测卡住也不阻塞注入', async () => {
+    /*
+     * 把"不 await"这条约束钉死。若有人把 `void` 改成 `await`，这条会超时 ——
+     * 而真实世界里的表现是：一个响应很慢的探测源让每次页面加载都卡住几秒，
+     * 注入全部迟到，功能整体失效，但没有任何报错。
+     */
+    seedMockStore({
+      ...READY,
+      'lostproxy.timezone': {
+        zone: 'Asia/Shanghai',
+        country: 'CN',
+        locale: 'zh-CN',
+        exitIp: null,
+        at: 0,
+        node: null,
+        error: null,
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+
+    await handleTabLoading(9, 'https://chatgpt.com/')
+
+    expect(readExecuteScriptCalls()).toHaveLength(1)
+    expect(readExecuteScriptCalls()[0]?.args).toEqual([
+      { zone: 'Asia/Shanghai', locale: 'zh-CN' },
+    ])
+  })
+
+  it('探测失败时不注入，也不抛', async () => {
+    // 页面加载路径上不该因为一次探测失败冒出与当前动作无关的错误。
+    seedMockStore(READY)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    )
+
+    await expect(handleTabLoading(7, 'https://chatgpt.com/')).resolves.toBeUndefined()
+    expect(readExecuteScriptCalls()).toHaveLength(0)
+  })
+
+  it('注入失败（缺权限）时也不抛', async () => {
+    seedMockStore({ ...READY, 'lostproxy.timezone': freshSnapshot })
+    failNextExecuteScript(new Error('Cannot access contents of the page'))
+
+    await expect(handleTabLoading(7, 'https://chatgpt.com/')).resolves.toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// V0.10 请求头规则的生命周期
+// ---------------------------------------------------------------------------
+
+describe('V0.10 请求头规则', () => {
+  /**
+   * 这些用例守的是同一个东西：**规则只该存在于它该存在的时候**。
+   *
+   * 规则是浏览器级持久化的，寿命比 Service Worker、比页面、甚至比
+   * 用户的这次会话都长。所以每一条"该清掉"的路径都必须有测试 ——
+   * 漏掉任何一条，症状都是「功能已经关了，请求头还在被改」，
+   * 而它不会报错、不会出现在任何界面上。
+   */
+
+  const SYNC_READY = {
+    'lostproxy.settings': {
+      ...DEFAULT_SETTINGS,
+      timezoneSyncEnabled: true,
+      localeSyncEnabled: true,
+      timezoneHosts: ['chatgpt.com', 'openai.com'],
+    },
+    'lostproxy.enabled': true,
+  }
+
+  function stubProbeWith(body: unknown) {
+    const mock = vi.fn(async () => ({ ok: true, status: 200, json: async () => body }))
+    vi.stubGlobal('fetch', mock)
+    return mock
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('探测成功后为清单里的每个域名建立规则', async () => {
+    seedMockStore(SYNC_READY)
+    stubProbeWith({ timezone: 'America/Los_Angeles', ip: '1.2.3.4', country: 'US' })
+
+    const response = await handleSyncTimezone()
+
+    expect(response.ok).toBe(true)
+    expect(readDynamicRules()).toHaveLength(2)
+    expect(readDynamicRules().map((rule) => rule.condition?.urlFilter)).toEqual([
+      '||chatgpt.com^',
+      '||openai.com^',
+    ])
+    expect(readDynamicRules()[0]?.action?.requestHeaders?.[0]?.value).toBe('en-US,en;q=0.9')
+  })
+
+  it('🔴 关闭代理时清掉规则', async () => {
+    /*
+     * 页面侧已经不再注入（`handleTabLoading` 查了 enabled），规则若留着，
+     * 就会得到一个「时区是本地的、`Accept-Language` 却是英文」的页面。
+     * 那个组合比原样不动更显眼，而且没有任何地方能看出它是我们造成的。
+     */
+    seedMockStore(SYNC_READY)
+    stubProbeWith({ timezone: 'America/Los_Angeles', ip: '1.2.3.4', country: 'US' })
+    await handleSyncTimezone()
+    expect(readDynamicRules()).toHaveLength(2)
+
+    await handleDisable()
+
+    expect(readDynamicRules()).toHaveLength(0)
+  })
+
+  it('🔴 关掉「跟随代理出口」时清掉规则', async () => {
+    seedMockStore(SYNC_READY)
+    stubProbeWith({ timezone: 'America/Los_Angeles', ip: '1.2.3.4', country: 'US' })
+    await handleSyncTimezone()
+    expect(readDynamicRules()).toHaveLength(2)
+
+    const response = await handleSaveSettings({ timezoneSyncEnabled: false })
+
+    expect(response.ok).toBe(true)
+    expect(readDynamicRules()).toHaveLength(0)
+  })
+
+  it('🔴 国家查不到时不留规则，也不注入语言', async () => {
+    /*
+     * 只改页面语言、不改请求头会造出「头说中文、JS 说英文」的组合 ——
+     * 一次请求加一次 JS 执行就能看出来，比两边都不改更糟。
+     * 所以模型的推导失败必须让整条语言链路一起退场，而不是降级。
+     */
+    seedMockStore({
+      ...SYNC_READY,
+      'lostproxy.settings': {
+        ...DEFAULT_SETTINGS,
+        timezoneSyncEnabled: true,
+        localeSyncEnabled: true,
+        timezoneHosts: ['chatgpt.com'],
+      },
+    })
+    stubProbeWith({ timezone: 'Asia/Tokyo', ip: '1.2.3.4' })
+    setMockTabs([{ id: 5, url: 'https://chatgpt.com/' }])
+
+    await handleSyncTimezone()
+
+    expect(readDynamicRules()).toHaveLength(0)
+    const call = readExecuteScriptCalls()[0]
+    expect(call?.args).toEqual([{ zone: 'Asia/Tokyo', locale: null }])
+  })
+
+  it('🔴 语言开关关着时只改时区', async () => {
+    /*
+     * 这是 v0.8.1 把语言拆成独立开关之后的核心行为。
+     *
+     * 默认就是关的 —— 因为「时区」修的是一个真实的矛盾（出口在洛杉矶、
+     * 浏览器报上海），而「语言」是把一项本来不矛盾的东西改掉：中文浏览器
+     * 配洛杉矶出口在真实用户里大量存在，本身不算破绽。
+     *
+     * 关着的时候必须完全不碰请求头：规则一条不留，注入的 locale 为 null。
+     * 留一条规则就等于"用户以为关掉了，出站请求还在被改"。
+     */
+    seedMockStore({
+      ...SYNC_READY,
+      'lostproxy.settings': {
+        ...DEFAULT_SETTINGS,
+        timezoneSyncEnabled: true,
+        localeSyncEnabled: false,
+        timezoneHosts: ['chatgpt.com'],
+      },
+    })
+    stubProbeWith({ timezone: 'America/Los_Angeles', ip: '1.2.3.4', country: 'US' })
+    setMockTabs([{ id: 3, url: 'https://chatgpt.com/' }])
+
+    const response = await handleSyncTimezone()
+
+    expect(response.ok).toBe(true)
+    expect(readDynamicRules()).toHaveLength(0)
+    expect(readExecuteScriptCalls()[0]?.args).toEqual([
+      { zone: 'America/Los_Angeles', locale: null },
+    ])
+  })
+
+  it('🔴 关掉语言开关会撤掉已建立的规则', async () => {
+    // 「先开着用了一阵，然后关掉」是最常见的路径，也是残留最容易发生的地方。
+    seedMockStore(SYNC_READY)
+    stubProbeWith({ timezone: 'America/Los_Angeles', ip: '1.2.3.4', country: 'US' })
+    await handleSyncTimezone()
+    expect(readDynamicRules()).toHaveLength(2)
+
+    const response = await handleSaveSettings({ localeSyncEnabled: false })
+
+    expect(response.ok).toBe(true)
+    expect(readDynamicRules()).toHaveLength(0)
+  })
+
+  it('🔴 reconcile 在代理关着时也清理残留规则', async () => {
+    /*
+     * 残留是真实可能出现的：上一次运行写入了规则，用户随后关掉代理，
+     * 而那次清理恰好在 Service Worker 被回收时没跑完。启动时这一步
+     * 是唯一的自愈机会 —— 它不能躲在 `if (!enabled) return` 后面。
+     */
+    seedDynamicRules([
+      {
+        id: 9100,
+        priority: 1,
+        action: {
+          type: 'modifyHeaders' as chrome.declarativeNetRequest.RuleActionType,
+          requestHeaders: [
+            {
+              header: 'accept-language',
+              operation: 'set' as chrome.declarativeNetRequest.HeaderOperation,
+              value: 'en-US,en;q=0.9',
+            },
+          ],
+        },
+        condition: { urlFilter: '||chatgpt.com' },
+      },
+    ])
+    seedMockStore({
+      ...SYNC_READY,
+      'lostproxy.enabled': false,
+    })
+
+    await reconcile()
+
+    expect(readDynamicRules()).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// V0.8.0 自检
+// ---------------------------------------------------------------------------
+
+describe('V0.8.0 自检', () => {
+  /**
+   * 自检要回答的是「为什么没生效」，所以每一条用例都在验同一个问题：
+   * **哪一步会先断，报出来的又是哪一句。**
+   *
+   * 它存在的理由是这个功能的失败全是静默的 —— 不报错、不弹窗，
+   * 页面照常打开，只是时区没变。所以这里断言的是 `key`（语义）
+   * 而不是拼好的句子：后者会随语言变，前者才是被测对象。
+   */
+
+  const READY = {
+    'lostproxy.settings': {
+      ...DEFAULT_SETTINGS,
+      timezoneSyncEnabled: true,
+      timezoneHosts: ['chatgpt.com'],
+    },
+    'lostproxy.enabled': true,
+    'lostproxy.timezone': {
+      zone: 'Asia/Tokyo',
+      country: 'JP',
+      locale: 'ja-JP',
+      exitIp: '103.1.2.3',
+      at: Date.now(),
+      node: 'JP-01',
+      error: null,
+    },
+  }
+
+  const keysOf = (steps: readonly { key: string; ok: boolean }[]): string[] =>
+    steps.map((step) => step.key)
+
+  it('功能关着时第一步就报出来', async () => {
+    seedMockStore({
+      'lostproxy.settings': { ...DEFAULT_SETTINGS, timezoneSyncEnabled: false },
+    })
+
+    const response = await handleSelfCheck()
+
+    expect(response.ok).toBe(true)
+    if (!response.ok) return
+    expect(response.data.steps[0]).toMatchObject({ key: 'check.featureOff', ok: false })
+  })
+
+  it('清单为空时第二步报出来', async () => {
+    seedMockStore({
+      'lostproxy.settings': {
+        ...DEFAULT_SETTINGS,
+        timezoneSyncEnabled: true,
+        timezoneHosts: [],
+      },
+    })
+
+    const response = await handleSelfCheck()
+
+    if (!response.ok) return
+    expect(response.data.steps[1]).toMatchObject({ key: 'check.hostsEmpty', ok: false })
+  })
+
+  it('🔴 清单里的站点一个都没打开时明说', async () => {
+    /*
+     * 这一格是自检最容易被写错的地方：直觉上"检查活动标签页"，而用户点
+     * 按钮时活动的正是设置页自己 —— 那样永远查不出东西，还会给出一句
+     * "这个页面不在清单里"的假结论。
+     */
+    seedMockStore(READY)
+    setMockTabs([{ id: 1, url: 'https://example.com/' }])
+
+    const response = await handleSelfCheck()
+
+    if (!response.ok) return
+    expect(response.data.url).toBeNull()
+    expect(keysOf(response.data.steps)).toContain('check.noTarget')
+  })
+
+  it('全部正常时最后一条是「页面已生效」', async () => {
+    seedMockStore(READY)
+    setMockTabs([{ id: 7, url: 'https://chatgpt.com/c/1' }])
+    setGrantedOrigins(['*://*.chatgpt.com/*'])
+    setMockExecuteScriptResult({ timezone: 'Asia/Tokyo', locale: 'ja-JP', language: 'ja' })
+
+    const response = await handleSelfCheck()
+
+    if (!response.ok) return
+    const last = response.data.steps.at(-1)
+    expect(last).toMatchObject({ key: 'check.applied', ok: true })
+    expect(response.data.observed).toMatchObject({ timezone: 'Asia/Tokyo' })
+  })
+
+  it('🔴 页面还是老时区时，给出两边的值', async () => {
+    /*
+     * 这是最常见的一种"没生效"：配置全对，只是改完设置没刷新页面。
+     * 只说"没生效"用户不知道该做什么；带上 actual 与 expected，
+     * 他立刻知道该刷新。
+     */
+    seedMockStore(READY)
+    setMockTabs([{ id: 7, url: 'https://chatgpt.com/' }])
+    setGrantedOrigins(['*://*.chatgpt.com/*'])
+    setMockExecuteScriptResult({ timezone: 'Asia/Shanghai', locale: 'zh-CN', language: 'zh-CN' })
+
+    const response = await handleSelfCheck()
+
+    if (!response.ok) return
+    const last = response.data.steps.at(-1)
+    expect(last).toMatchObject({
+      key: 'check.needsReload',
+      ok: false,
+      params: { actual: 'Asia/Shanghai', expected: 'Asia/Tokyo' },
+    })
+  })
+
+  it('🔴 没有权限时不去读页面', async () => {
+    /*
+     * 没权限还去 executeScript 只会得到一个被 catch 掉的异常，
+     * 而"读不到"会被误报成一条独立的问题 —— 真正的原因是权限。
+     */
+    seedMockStore(READY)
+    setMockTabs([{ id: 7, url: 'https://chatgpt.com/' }])
+
+    const response = await handleSelfCheck()
+
+    if (!response.ok) return
+    expect(keysOf(response.data.steps)).toContain('check.notPermitted')
+    expect(response.data.observed).toBeNull()
+    expect(readExecuteScriptCalls()).toHaveLength(0)
   })
 })

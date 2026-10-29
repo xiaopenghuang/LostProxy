@@ -241,3 +241,75 @@ describe('🔴 版本号不许写死在界面里', () => {
     expect(read('src/options/options.ts')).toContain('getManifest().version')
   })
 })
+
+describe('时区同步卡片（V0.9）', () => {
+  it('🔴 两个即时动作按钮都不是 submit', () => {
+    /*
+     * 「立即探测」与「授予访问权限」都在保存栏所属的 <form> 里，
+     * 而 form 内不写 type 的按钮默认就是 submit —— 点一下会连带
+     * 把整份设置保存一遍。
+     *
+     * 授权按钮上这一点尤其要紧：提交会让页面开始导航/重新渲染，
+     * 而 `permissions.request()` 必须在那次点击的手势栈里同步发起。
+     * 两者抢同一个点击的结果是授权弹窗根本不会出现。
+     */
+    for (const id of ['#tz-sync', '#tz-grant']) {
+      const button = document.querySelector<HTMLButtonElement>(id)
+      expect(button, id).not.toBeNull()
+      expect(button?.getAttribute('type'), id).toBe('button')
+    }
+  })
+
+  it('开关与站点清单随保存条一起提交', () => {
+    // 放到 form 外就等于「改了但保存不上」—— 而且界面上看不出来。
+    for (const id of ['#tz-enabled', '#tz-hosts']) {
+      expect(document.querySelector(id)?.closest('form'), id).not.toBeNull()
+    }
+  })
+
+  it('站点清单有可访问的名字', () => {
+    const label = document.querySelector('label[for="tz-hosts"]')
+    expect(label?.getAttribute('data-i18n')).toBe('options.tzHosts')
+  })
+
+  it('开关有可访问的名字', () => {
+    // `.check` 是隐式 label：input 被包在 <label> 里，文本在同一个 label 内。
+    const input = document.querySelector('#tz-enabled')
+    expect(input?.closest('label')).not.toBeNull()
+  })
+
+  it('探测结果与授权结果各有独立的输出位', () => {
+    // 两条信息不能共用一个节点：授权成功会盖掉"当前探测到"，
+    // 而用户正需要同时看到这两个。
+    expect(document.querySelector('#tz-status')).not.toBeNull()
+    expect(document.querySelector('#tz-result')).not.toBeNull()
+  })
+})
+
+describe('语言开关（V0.8.0）', () => {
+  it('随保存条一起提交', () => {
+    // 放到 form 外就等于「勾了但存不上」—— 而界面上完全看不出来。
+    expect(document.querySelector('#tz-locale')?.closest('form')).not.toBeNull()
+  })
+
+  it('是 checkbox 且有可访问的名字', () => {
+    const input = document.querySelector<HTMLInputElement>('#tz-locale')
+    expect(input?.type).toBe('checkbox')
+    // `.check` 是隐式 label：input 与文本包在同一个 <label> 里。
+    const label = input?.closest('label')
+    expect(label).not.toBeNull()
+    expect(label?.querySelector('.check-text')?.getAttribute('data-i18n')).toBe(
+      'options.tzLocaleEnable',
+    )
+  })
+
+  it('🔴 文字说明必须提到会改请求头', () => {
+    /*
+     * 这个开关改的是**出站请求头**，而不仅仅是页面里的值 —— 用户看到的
+     * 界面语言可能因此切换。说明里不写这一句，就是在让他为一个
+     * 他看不见的副作用做选择。
+     */
+    const hint = document.querySelector('[data-i18n="options.tzLocaleHint"]')
+    expect(hint).not.toBeNull()
+  })
+})

@@ -57,6 +57,7 @@ describe('dictionary consistency', () => {
       'popup.latencyUntested',
       // 域名示例。翻译域名会得到一批不存在的站点，比不翻译更糟。
       'options.rulesPlaceholder',
+      'options.tzHostsPlaceholder',
     ])
     if (intentionallyIdentical.has(key)) return
 

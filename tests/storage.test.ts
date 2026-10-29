@@ -313,6 +313,9 @@ describe('toSettingsView', () => {
       primaryGroup: '🇭🇰 香港 | 专线',
       routingMode: 'smart',
       directRules: ['*.edu.cn'],
+      timezoneSyncEnabled: true,
+      localeSyncEnabled: false,
+      timezoneHosts: ['chatgpt.com'],
     })
 
     expect(view).toEqual({
@@ -328,6 +331,9 @@ describe('toSettingsView', () => {
       primaryGroup: '🇭🇰 香港 | 专线',
       routingMode: 'smart',
       directRules: ['*.edu.cn'],
+      timezoneSyncEnabled: true,
+      localeSyncEnabled: false,
+      timezoneHosts: ['chatgpt.com'],
     })
   })
 })

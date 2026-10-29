@@ -54,6 +54,22 @@ const EXPECTED_SELF_HEALING: Record<ErrorCode, boolean> = {
   LATENCY_TEST_FAILED: false,
   SUBS_UPDATE_FAILED: false,
   /*
+   * V0.9 的四个时区码 —— 全部 false。
+   *
+   * 它们目前都不写入 lastError：探测失败只通过响应信封回给发起点击的
+   * 设置页，注入失败静默返回（页面加载路径上不该冒出与当前动作无关的告警）。
+   * 所以自愈这条路径根本不会走到这里。
+   *
+   * 表态仍然必要，理由与上面几组一致：将来若有人把它们写进 lastError，
+   * false（告警留着）是安全方向 —— 时区同步失效时用户最需要知道的
+   * 恰恰是「它失效了」，而不是让它悄悄消失。
+   */
+  TZ_PROBE_FAILED: false,
+  TZ_INVALID_ZONE: false,
+  TZ_PERMISSION_REQUIRED: false,
+  TZ_PROXY_OFF: false,
+  TZ_NO_HOSTS: false,
+  /*
    * V0.3 的两个平台前置条件码（ADR-36）—— 都是 false，但理由与上面几组不同，
    * 值得写清楚，因为它们**确实会**写进 lastError（走 enableProxy 的失败分支）。
    *

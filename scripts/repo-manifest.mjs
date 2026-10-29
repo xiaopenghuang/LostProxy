@@ -49,6 +49,7 @@ export const ALLOWED_ROOT_ENTRIES = Object.freeze([
   'README.en.md',
   'README.md',
   'REVIEWERS.md',
+  'biome.json',
   'package-lock.json',
   'package.json',
   'scripts',

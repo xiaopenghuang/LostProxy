@@ -417,6 +417,9 @@ h1 {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* 卡片在 920px 页宽下是两列，单个卡片很窄；两个按钮（如「立即探测」
+     「授予访问权限」）并排放不下时应当换行，而不是把最后一个挤出边界。 */
+  flex-wrap: wrap;
 }
 
 .input-wrapper {
@@ -708,6 +711,15 @@ select.control {
   color: var(--danger);
 }
 
+/*
+ * 探测失败那一行（V0.9）。它用的是 .hint 而不是 .result ——
+ * 后者是操作反馈的短标签，而这句是"为什么没同步上"的解释，要能读完。
+ * 但配色需要与其它失败提示一致，否则同一页里两种红色。
+ */
+.hint[data-state="error"] {
+  color: var(--danger);
+}
+
 /* ---------- 代码编辑框 Code Box ---------- */
 
 .code-editor-box {
@@ -835,4 +847,75 @@ select.control {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* 快捷填充的小按钮（V0.8.0）。
+   刻意做得很轻：它只是一个"少打几个字"的便利，
+   不该在视觉上和「保存」「授予访问权限」抢戏。 */
+.tz-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.chip {
+  padding: 2px 9px;
+  font-size: 12px;
+  line-height: 18px;
+  font-family: inherit;
+  color: var(--fg-secondary);
+  background: transparent;
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.chip:hover {
+  color: inherit;
+  border-color: var(--stroke-strong);
+}
+
+.chip:active {
+  background: var(--accent-soft);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 自检结果（V0.8.0）。
+   一行一条、不设边框、不加卡片 —— 它是一次性输出，
+   贴得太重会让整张卡片看起来像报错页。 */
+.check-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.check-item {
+  display: flex;
+  gap: 6px;
+  color: var(--fg-secondary);
+}
+
+.check-item::before {
+  flex: none;
+  width: 12px;
+  text-align: center;
+}
+
+.check-item[data-state='ok']::before {
+  content: '✓';
+  color: var(--ok);
+}
+
+.check-item[data-state='fail']::before {
+  content: '✗';
+  color: var(--danger);
 }

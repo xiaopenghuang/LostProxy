@@ -1,6 +1,6 @@
 {
   "name": "lostproxy",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "description": "Browser-scoped proxy manager for Microsoft Edge (Manifest V3). Routes only this browser through a local Mihomo/Clash core, without touching Windows system proxy, TUN or the routing table.",
@@ -16,11 +16,13 @@
     "watch": "vite build --watch",
     "watch:sw": "vite build --config vite.config.sw.ts --watch",
     "typecheck": "tsc --noEmit",
+    "lint": "biome check",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify": "npm run typecheck && npm run test && npm run build"
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run build"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.6.4",
     "@types/chrome": "^0.2.7",
     "@types/node": "^26.4.0",
     "happy-dom": "20.0.10",

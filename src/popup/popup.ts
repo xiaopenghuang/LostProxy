@@ -50,6 +50,10 @@ const el = {
   coreNote: document.querySelector<HTMLElement>('#core-note'),
   modeText: document.querySelector<HTMLElement>('#mode-text'),
   nodeText: document.querySelector<HTMLElement>('#node-text'),
+  timezoneLabel: document.querySelector<HTMLElement>('#timezone-label'),
+  timezoneText: document.querySelector<HTMLElement>('#timezone-text'),
+  timezoneValue: document.querySelector<HTMLElement>('#timezone-value'),
+  timezoneRefresh: document.querySelector<HTMLButtonElement>('#timezone-refresh'),
   webrtcText: document.querySelector<HTMLElement>('#webrtc-text'),
   settings: document.querySelector<HTMLButtonElement>('#open-settings'),
   nodesGroup: document.querySelector<HTMLElement>('#nodes-group'),
@@ -479,9 +483,78 @@ function render(snapshot: StatusSnapshot): void {
   // group 为空（未配置 / 核心不可达 / 组不存在）或 now 为空（LoadBalance 组）都落到 '—'。
   if (el.nodeText) el.nodeText.textContent = snapshot.group?.now ?? '—'
 
+  /*
+   * 时区（V0.9）。
+   *
+   * 三态，不能合并：
+   *   - 功能没开，或清单为空 → 两行一起隐藏（不占位）
+   *   - 开了但还没探测成功   → 显示「未同步」
+   *   - 有值                 → 显示 IANA 名
+   *
+   * 「清单为空」归进隐藏那一档，而不是显示时区：那种状态下没有任何站点
+   * 会被注入，显示的时区名是一个不成立的承诺 —— 而这正是面板最不该做的事。
+   *
+   * 隐藏而不是显示「未启用」，是因为一个用户从没开过的功能不该在面板上
+   * 留一行他看不懂的东西；而开了却没探测到，就必须说出来 —— 那种情况下
+   * 页面上的时区仍然是本机的，用户有理由以为它已经在工作了。
+   */
+  if (el.timezoneLabel && el.timezoneText) {
+    const active = snapshot.timezone !== null && snapshot.settings.timezoneHosts.length > 0
+    el.timezoneLabel.hidden = !active
+    el.timezoneText.hidden = !active
+
+    // 写 span 而不是 dd：dd 里还住着那颗刷新按钮，覆盖 textContent 会把它删掉。
+    if (active && el.timezoneValue !== null) {
+      el.timezoneValue.textContent = snapshot.timezone?.zone ?? t('popup.timezoneNone')
+    }
+
+    if (el.timezoneRefresh !== null) {
+      el.timezoneRefresh.hidden = !active
+      el.timezoneRefresh.disabled = syncingTimezone
+      // 只有图标，所以可访问名字必须靠 aria-label —— 顺带填 title 当提示。
+      const label = t('popup.timezoneRefresh')
+      el.timezoneRefresh.setAttribute('aria-label', label)
+      el.timezoneRefresh.title = label
+    }
+  }
+
   renderModes(snapshot)
   renderNodes(snapshot)
   showAlert(snapshot.lastError)
+}
+
+/**
+ * 时区行那颗按钮的忙碌状态。
+ *
+ * 放在模块作用域是**可以的**，与 ADR-08「SW 不在模块作用域持有可变状态」
+ * 不冲突：那一条约束的是 background 的 Service Worker（随时会被回收），
+ * 而 popup 每次打开都是一个新文档，状态天然重置。
+ */
+let syncingTimezone = false
+
+/**
+ * 立即探测一次（V0.8.0）。
+ *
+ * 失败时把时区那一格换成一句短提示 —— popup 没有别的地方能承载
+ * 「一次操作的失败」，而把它塞进 `showAlert` 会和代理层告警混在一起，
+ * 那是最不该被顶掉的一条信息。
+ */
+async function syncTimezoneNow(): Promise<void> {
+  if (syncingTimezone) return
+  syncingTimezone = true
+  if (el.timezoneRefresh !== null) el.timezoneRefresh.disabled = true
+
+  try {
+    const response = await sendMessage({ type: 'SYNC_TIMEZONE' })
+    if (!response.ok && el.timezoneValue !== null) {
+      el.timezoneValue.textContent = t('popup.timezoneSyncFailed')
+    }
+    // 成功也要重拉：时区、节点、错误状态都可能刚变过。
+    await refresh()
+  } finally {
+    syncingTimezone = false
+    if (el.timezoneRefresh !== null) el.timezoneRefresh.disabled = false
+  }
 }
 
 /** 重新拉取真实状态。任何操作失败后都必须调用它，让 UI 回到事实。 */
@@ -493,6 +566,10 @@ async function refresh(): Promise<void> {
     showAlert(response.error)
   }
 }
+
+el.timezoneRefresh?.addEventListener('click', () => {
+  void syncTimezoneNow()
+})
 
 el.toggle?.addEventListener('click', async () => {
   // 以当前 aria-checked 为准判断意图，而不是维护一份本地状态——

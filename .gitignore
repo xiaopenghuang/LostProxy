@@ -31,3 +31,6 @@ docs/
 
 # 打包产物
 release/
+
+# 本地工作记忆（编辑器/agent 的临时笔记，不属于项目内容）
+.workbuddy/

@@ -22,30 +22,12 @@
  * 而一份守不住的白名单只会被人用 `--no-verify` 绕过。
  */
 
-import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ALLOWED_ROOT_ENTRIES, findStrayRootEntries } from '../scripts/repo-manifest.mjs'
 
 const ROOT = resolve(import.meta.dirname, '..')
-
-/**
- * HEAD 根目录的实际条目。
- *
- * ⚠️ 用 `-z`：git 默认会给含特殊字符的路径加引号并转义，按 `\n` 切一个
- *    带换行的文件名会得到两个假条目 —— 而能藏东西的正是这种畸形名字。
- *
- * CI 的 checkout 可能是浅克隆，但 `ls-tree HEAD` 只需要 HEAD 那棵 tree，
- * 浅克隆里它是完整的。
- */
-function rootEntries(): string[] {
-  return execFileSync('git', ['ls-tree', '--name-only', '-z', 'HEAD'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-  })
-    .split('\0')
-    .filter((name) => name.length > 0)
-}
 
 describe('🔴 仓库根目录不得有计划外的文件', () => {
   it('HEAD 根目录的每一项都在白名单上', () => {
@@ -72,11 +54,15 @@ describe('🔴 仓库根目录不得有计划外的文件', () => {
      * 删了一个根文件却忘了从清单里摘掉，清单就开始描述一个不存在的仓库；
      * 几次之后没人再信它，于是往里加东西也不再需要理由 ——
      * 白名单失效通常不是因为被绕过，而是因为烂掉。
+     *
+     * ⚠️ 这一条查**工作区**而不是 HEAD。用 HEAD 的话，"刚加了一个根文件、
+     *    还没提交"这个完全正常的动作会把测试变红 —— 而那时清单恰恰是对的。
+     *    上面那一条查 HEAD 是必须的（它守的是 `git archive` 的内容），
+     *    但这一条守的是"清单有没有指向空气"，工作区才是对的判据。
      */
-    const actual = new Set(rootEntries())
-    const stale = ALLOWED_ROOT_ENTRIES.filter((name) => !actual.has(name))
+    const stale = ALLOWED_ROOT_ENTRIES.filter((name) => !existsSync(resolve(ROOT, name)))
 
-    expect(stale, `白名单里这些条目在 HEAD 里已经没有了：${stale.join(', ')}`).toEqual([])
+    expect(stale, `白名单里这些条目在工作区里已经没有了：${stale.join(', ')}`).toEqual([])
   })
 
   it('白名单本身没有重复项', () => {

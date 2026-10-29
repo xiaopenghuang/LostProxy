@@ -25,8 +25,11 @@ import {
   RULE_MAX_COUNT,
   RULE_MAX_LENGTH,
   STORAGE_KEYS,
+  TIMEZONE_HOST_MAX,
 } from '../shared/constants'
 import { sanitizeRule } from './pac'
+import { isValidHostPattern } from './timezone'
+import { coerceNormalizedError } from '../shared/errors'
 import type { Language, MessageKey, MessageParams } from '../shared/i18n'
 import type {
   NormalizedError,
@@ -127,7 +130,38 @@ export function coerceSettings(raw: unknown): Settings {
           ),
         )
       : DEFAULT_SETTINGS.directRules,
+    timezoneSyncEnabled:
+      typeof input.timezoneSyncEnabled === 'boolean'
+        ? input.timezoneSyncEnabled
+        : DEFAULT_SETTINGS.timezoneSyncEnabled,
+    localeSyncEnabled:
+      typeof input.localeSyncEnabled === 'boolean'
+        ? input.localeSyncEnabled
+        : DEFAULT_SETTINGS.localeSyncEnabled,
+    timezoneHosts: coerceTimezoneHosts(input.timezoneHosts),
   }
+}
+
+/**
+ * 宽容解析时区域名清单：非法条目丢弃、去重、转小写。
+ *
+ * 与 directRules 同样是「读宽容、写严格」的那一半 —— 走的是读取路径，
+ * 不能让一条脏数据把整个设置读崩，但也不能让它原样留下。
+ *
+ * ⚠️ 非数组输入回退到**默认值**而不是空数组：`null` / 缺失意味着
+ *    「旧版本没这个字段」，那种情况应当拿到预填的 chatgpt.com；
+ *    而空数组是用户显式清空的结果，必须尊重。
+ */
+function coerceTimezoneHosts(raw: unknown): readonly string[] {
+  if (!Array.isArray(raw)) return DEFAULT_SETTINGS.timezoneHosts
+
+  const seen = new Set<string>()
+  for (const item of raw) {
+    if (!isValidHostPattern(item)) continue
+    seen.add(item.trim().toLowerCase())
+    if (seen.size >= TIMEZONE_HOST_MAX) break
+  }
+  return Object.freeze([...seen])
 }
 
 /**
@@ -231,6 +265,41 @@ export function validateSettings(patch: Partial<Settings>, base: Settings): Vali
     }
   }
 
+  if (patch.timezoneSyncEnabled !== undefined && typeof patch.timezoneSyncEnabled !== 'boolean') {
+    add('validation.tzEnabled')
+  }
+
+  if (patch.localeSyncEnabled !== undefined && typeof patch.localeSyncEnabled !== 'boolean') {
+    add('validation.tzLocaleEnabled')
+  }
+
+  /*
+   * 时区注入清单的校验比 directRules 更严，因为它决定的不是"哪个域名走代理"
+   * 而是**向浏览器要哪些站点的权限**。一条写错的域名在这里被放过，
+   * 会在 `permissions.request` 里变成一个用户看不懂的来源，
+   * 或者在 `executeScript` 里静默失败。
+   *
+   * 判定复用 `isValidHostPattern`（timezone.ts），与注入路径同一个来源 ——
+   * 两处各写一套正则，迟早会出现「保存通过了但注入匹配不上」的漂移。
+   */
+  if (patch.timezoneHosts !== undefined) {
+    if (!Array.isArray(patch.timezoneHosts)) {
+      add('validation.tzHostInvalid', { host: String(patch.timezoneHosts).slice(0, 40) })
+    } else if (patch.timezoneHosts.length > TIMEZONE_HOST_MAX) {
+      add('validation.tzHostsTooMany', {
+        count: patch.timezoneHosts.length,
+        max: TIMEZONE_HOST_MAX,
+      })
+    } else {
+      for (const host of patch.timezoneHosts) {
+        if (!isValidHostPattern(host)) {
+          add('validation.tzHostInvalid', { host: String(host).slice(0, 40) })
+          break
+        }
+      }
+    }
+  }
+
   if (issues.length > 0) {
     return { ok: false, errors: issues }
   }
@@ -241,6 +310,11 @@ export function validateSettings(patch: Partial<Settings>, base: Settings): Vali
       ...merged,
       proxyHost: merged.proxyHost.trim(),
       controllerHost: merged.controllerHost.trim(),
+      // 落盘前统一成小写并去重：用户可能填了 `ChatGPT.com` 与 `chatgpt.com`
+      // 两遍，而它们在浏览器眼里是同一个站点、只需要一条权限。
+      timezoneHosts: Object.freeze([
+        ...new Set(merged.timezoneHosts.map((host) => host.trim().toLowerCase())),
+      ]),
     },
   }
 }
@@ -291,27 +365,11 @@ export async function setEnabledState(enabled: boolean): Promise<void> {
  * 而 `fatal: false` 的 proxy error 恰恰意味着**已经发生过一次直连**，
  * 是全项目最不能丢的一条信息（architecture.md ADR-04）。
  *
- * 宽容解析：脏数据不能让 SW 起不来。缺 `key` 的旧格式记录会被丢弃——
- * 没有 key 就无法翻译，留着也没法展示。
+ * 宽容解析在 `coerceNormalizedError` 里（shared/errors.ts），与构造端放在一起。
  */
 export async function getLastError(): Promise<NormalizedError | null> {
   const record = await chrome.storage.local.get(STORAGE_KEYS.lastError)
-  const raw = record[STORAGE_KEYS.lastError]
-
-  if (typeof raw !== 'object' || raw === null) return null
-  const candidate = raw as Partial<NormalizedError>
-  if (typeof candidate.code !== 'string' || typeof candidate.key !== 'string') return null
-
-  const restored: NormalizedError = {
-    code: candidate.code,
-    key: candidate.key,
-    message: typeof candidate.message === 'string' ? candidate.message : '',
-    at: typeof candidate.at === 'number' ? candidate.at : 0,
-  }
-  if (candidate.params !== undefined) {
-    return { ...restored, params: candidate.params }
-  }
-  return restored
+  return coerceNormalizedError(record[STORAGE_KEYS.lastError])
 }
 
 /** 写入最近一次错误；传 null 表示清除。 */
@@ -345,5 +403,9 @@ export function toSettingsView(settings: Settings): SettingsView {
     // 非敏感：分流模式与直连域名都是用户自己填的，UI 需要回显。
     routingMode: settings.routingMode,
     directRules: settings.directRules,
+    // 时区同步的开关与站点清单 —— UI 要渲染它们，授权按钮也依赖清单内容。
+    timezoneSyncEnabled: settings.timezoneSyncEnabled,
+    localeSyncEnabled: settings.localeSyncEnabled,
+    timezoneHosts: settings.timezoneHosts,
   }
 }

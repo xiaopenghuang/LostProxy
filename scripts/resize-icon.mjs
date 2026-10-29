@@ -333,6 +333,7 @@ function applyRoundedCorners(size, rgba, radiusRatio) {
  * 判据是"与四角底色的差异"：底色可能是白也可能是蓝，
  * 所以不写死颜色，而是采样四角作为参考色。
  */
+// biome-ignore lint/correctness/noUnusedVariables: 保留作诊断参考，默认不调用（见文件末尾说明）
 function findGlyphBounds(source, tolerance = 42) {
   const { width, height, rgba } = source
 
@@ -381,6 +382,7 @@ function findGlyphBounds(source, tolerance = 42) {
  *
  * 这里输出一张正方形画布，图形按最长边缩放到 targetRatio，然后精确居中。
  */
+// biome-ignore lint/correctness/noUnusedVariables: 保留作诊断参考，默认不调用（见文件末尾说明）
 function recenter(source, bounds, targetRatio) {
   const glyphW = bounds.maxX - bounds.minX + 1
   const glyphH = bounds.maxY - bounds.minY + 1
@@ -430,7 +432,12 @@ function recenter(source, bounds, targetRatio) {
 
 const args = process.argv.slice(2)
 const noRound = args.includes('--no-round')
-const noCenter = args.includes('--no-center')
+/*
+ * `--no-center` 这个参数**已移除**，不再有对应代码。
+ * 自动居中在实测中会把整块底板当成图形，结果是图标被白边吃掉一半
+ * （见下方「关于自动居中」那段）。留一个"接受参数但什么也不做"的开关，
+ * 比没有这个开关更让人困惑。
+ */
 const explicit = args.find((a) => !a.startsWith('--'))
 
 const ICON_DIR = resolve(import.meta.dirname, '..', 'src', 'public', 'icons')
@@ -448,7 +455,7 @@ if (!sourcePath) {
   process.exit(1)
 }
 
-let source = decodePng(readFileSync(sourcePath))
+const source = decodePng(readFileSync(sourcePath))
 console.log(`源图: ${sourcePath}`)
 console.log(`      ${source.width}x${source.height}  colorType=${source.colorType}`)
 

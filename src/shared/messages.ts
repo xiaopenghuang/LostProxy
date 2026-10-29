@@ -13,12 +13,14 @@
 
 import type {
   ConnectionView,
+  SelfCheckReport,
   NormalizedError,
   ProviderView,
   ProxyGroup,
   Settings,
   SettingsView,
   StatusSnapshot,
+  TimezoneSnapshot,
 } from './types'
 
 /** 从 UI 发往 Service Worker 的请求。 */
@@ -90,6 +92,24 @@ export type Request =
    * 连接列表变化快，绑在每次开 Popup 上既无必要也会拖慢主状态。
    */
   | { readonly type: 'LIST_CONNECTIONS' }
+  /**
+   * V0.9：立即探测出口时区。
+   *
+   * 显式消息而不是 `GET_STATUS` 的一部分：探测要经代理发一次真实请求，
+   * 绑在「打开 Popup」上会让每次开面板都产生一次外部流量 ——
+   * 与 ADR-32「测速只在用户主动触发时发生」是同一条理由。
+   *
+   * 设置页点「立即探测」时走这里；节点切换后由 background 自己触发，
+   * 不经过消息通道。
+   */
+  | { readonly type: 'SYNC_TIMEZONE' }
+  /**
+   * 自检（V0.8.0）：逐项检查"为什么没生效"，并在页面上实测一次。
+   *
+   * 无参：目标从「已打开的、且域名在清单里的标签页」里挑。用活动标签页
+   * 是不行的 —— 用户点这个按钮时，活动的正是设置页自己。
+   */
+  | { readonly type: 'SELF_CHECK' }
 
 /** 消息类型字面量，便于运行时穷举校验。 */
 export type RequestType = Request['type']
@@ -129,6 +149,15 @@ export interface ResponsePayloads {
     uploadTotal: number
     downloadTotal: number
   }
+  /**
+   * V0.9：探测后的时区快照。
+   *
+   * 只回快照而不是整个 `StatusSnapshot`：一次探测不会改变代理、节点或
+   * 控制器状态，把六项探活重跑一遍（含 3 秒超时的那一项）纯属浪费，
+   * 而设置页只是要更新一行「当前探测到」。
+   */
+  SYNC_TIMEZONE: { timezone: TimezoneSnapshot }
+  SELF_CHECK: SelfCheckReport
 }
 
 /** 给定请求类型，推导出其响应类型。 */

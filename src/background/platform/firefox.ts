@@ -33,7 +33,7 @@
 import { DEFAULT_SETTINGS, LOOPBACK_HOSTS } from '../../shared/constants'
 import { errors } from '../../shared/errors'
 import type { NormalizedError, Settings } from '../../shared/types'
-import { needsRuleBasedRouting, sanitizeRules, shouldBypassProxy } from '../pac'
+import { isProbeHost, needsRuleBasedRouting, sanitizeRules, shouldBypassProxy } from '../pac'
 import type { BrowserPlatform, PlatformBlocker, ProxyInspection, WebRtcInspection } from './types'
 
 // ---------------------------------------------------------------------------
@@ -218,6 +218,19 @@ function proxySettings() {
  *    泄漏。同时设两个只会多一处配置不一致的可能。
  */
 export function buildProxyConfig(settings: Settings): FirefoxProxySettingsValue {
+  /*
+   * 🔴 与 Chromium 侧的同名分支对应，理由也一样：`direct` 曾经没有被实现，
+   * 这一档落到下面的 `manual`，于是「直连」实际把全部流量送进代理，
+   * 而 UI 写着「本浏览器直连」。
+   *
+   * `proxyType: 'none'` 是 Firefox 表达"不使用代理"的方式。它**不同于**
+   * `releaseProxy()` 里的 `clear()`：那条是把控制权还给浏览器（ADR-18），
+   * 这条是扩展仍持有控制权、按用户要求强制直连。
+   */
+  if (settings.routingMode === 'direct') {
+    return { proxyType: 'none' }
+  }
+
   return {
     proxyType: 'manual',
     http: `${settings.proxyHost}:${settings.proxyPort}`,
@@ -313,6 +326,17 @@ export function decideRoute(
   } catch {
     return proxied
   }
+
+  /*
+   * 🔴 探测域名要**先于**用户直连规则判断。
+   *
+   * 直连清单是用户填的，而"放行这个域名"是很自然的诉求（隐私考虑，
+   * 或者把 `*.io` 加进去想直连这类站点）。一旦命中，探测就从本机发出，
+   * 测到的是用户自己的时区 —— 而功能会把它当成正确答案注入页面。
+   *
+   * Chromium 那边由 PAC 里的同一段判断兜住，两者必须一致。
+   */
+  if (isProbeHost(host)) return proxied
 
   return shouldBypassProxy(host, rules) ? { type: 'direct' } : proxied
 }
@@ -508,6 +532,14 @@ function configMatches(
   expected: Settings,
 ): boolean {
   if (!config) return false
+
+  /*
+   * direct 档期望的是 `proxyType: 'none'` —— 与 manual 是两个不同的终态，
+   * 必须先判，否则下面那条 `proxyType !== 'manual'` 会把正确的直连配置
+   * 判成"不一致"，每次打开这一档都亮一个假警报。
+   */
+  if (expected.routingMode === 'direct') return config.proxyType === 'none'
+
   if (config.proxyType !== 'manual') return false
 
   /*

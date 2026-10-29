@@ -41,6 +41,9 @@ jobs:
       - run: npm ci
 
       # 测试不过就不发。这是发布闸门，不是可选步骤。
+      - name: Lint
+        run: npm run lint
+
       - name: Typecheck
         run: npm run typecheck
 

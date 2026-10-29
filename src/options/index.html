@@ -255,6 +255,101 @@
                 </div>
               </div>
             </section>
+
+            <!--
+              时区同步 (V0.9)
+
+              🔴 这张卡里有两个**不属于保存条**的动作：「立即探测」与
+                 「授予访问权限」。它们必须即时生效，不能等用户滚到底部点保存 ——
+                 而且授权请求只能在点击回调里发起（Firefox 与 Chromium 都要求
+                 用户手势），所以这两颗按钮必须是本页的直接子元素，
+                 不能被保存条的逻辑接管。
+            -->
+            <section class="card">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <h3>
+                    <span data-i18n="options.tzTitle"></span>
+                    <span class="tag" data-i18n="options.tzTag"></span>
+                  </h3>
+                  <p class="hint" data-i18n="options.tzDesc"></p>
+                </div>
+              </div>
+              <div class="card-body">
+                <label class="check">
+                  <input id="tz-enabled" type="checkbox" />
+                  <span class="check-box" aria-hidden="true">
+                    <svg viewBox="0 0 12 12" fill="none">
+                      <path d="M2.5 6 5 8.5 9.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </span>
+                  <span class="check-text" data-i18n="options.tzEnable"></span>
+                </label>
+
+                <!--
+                  语言是时区的**子选项**，不是平级的第二项：它依附于同一次
+                  出口探测，没有出口就没有"应该用哪种语言"的答案。默认关闭，
+                  理由在 `Settings.localeSyncEnabled` 的注释里。
+                -->
+                <label class="check">
+                  <input id="tz-locale" type="checkbox" />
+                  <span class="check-box" aria-hidden="true">
+                    <svg viewBox="0 0 12 12" fill="none">
+                      <path d="M2.5 6 5 8.5 9.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </span>
+                  <span class="check-text" data-i18n="options.tzLocaleEnable"></span>
+                </label>
+                <p class="hint hint--tight" data-i18n="options.tzLocaleHint"></p>
+
+                <p class="hint hint--tight" id="tz-status"></p>
+                <!--
+                  探测失败的详情。与 #tz-status 分开两个节点：
+                  那个讲"上次拿到的是什么"，这个讲"上次为什么没拿到"，
+                  两者可以同时成立（旧值仍在，但最近一次刷新失败了）。
+                -->
+                <p class="hint hint--tight" id="tz-error" data-state="error" hidden></p>
+
+                <div class="field">
+                  <label for="tz-hosts" data-i18n="options.tzHosts"></label>
+                  <div class="code-editor-box">
+                    <textarea
+                      id="tz-hosts"
+                      class="control control--area"
+                      rows="3"
+                      spellcheck="false"
+                      autocomplete="off"
+                    ></textarea>
+                  </div>
+                  <p class="hint hint--tight" data-i18n="options.tzHostsHint"></p>
+                  <!--
+                    常见站点的快捷填充。**只改输入框，不自动保存** ——
+                    这个动作的语义是"帮你少打几个字"，不是"替你决定"。
+                    保存仍然是下面那个按钮的事，与整页其余字段一致。
+                  -->
+                  <p class="tz-presets">
+                    <button type="button" class="chip" data-tz-host="chatgpt.com">ChatGPT</button>
+                    <button type="button" class="chip" data-tz-host="claude.ai">Claude</button>
+                    <button type="button" class="chip" data-tz-host="gemini.google.com">Gemini</button>
+                    <button type="button" class="chip" data-tz-host="grok.com">Grok</button>
+                  </p>
+                </div>
+
+                <div class="field-row">
+                  <button type="button" id="tz-sync" class="btn btn--secondary" data-i18n="options.tzSync"></button>
+                  <button type="button" id="tz-grant" class="btn btn--secondary" data-i18n="options.tzGrant"></button>
+                  <button type="button" id="tz-check" class="btn btn--secondary" data-i18n="options.checkRun"></button>
+                </div>
+                <p class="hint hint--tight" id="tz-result"></p>
+                <!--
+                  自检结果。默认隐藏：它是"点一下才知道"的东西，
+                  平时不该占着版面。每一行是一个结论，用 ::before 给
+                  勾/叉，不再另起图标节点。
+                -->
+                <ul class="check-list" id="check-list" hidden></ul>
+                <p class="hint" data-i18n="options.tzProbeNote"></p>
+              </div>
+            </section>
           </div>
         </div>
 

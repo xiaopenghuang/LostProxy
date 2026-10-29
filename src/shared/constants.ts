@@ -39,6 +39,22 @@ export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
    */
   routingMode: 'global',
   directRules: Object.freeze([]),
+  /*
+   * 默认关闭（V0.9）。理由不是保守，是这个功能的代价与其余功能不同类：
+   * 它会向第三方发请求、并在目标页面里执行脚本。默认开启等于替用户
+   * 接受了这两件事，而安装时用户看到的那句「只访问 127.0.0.1」就不再成立。
+   */
+  timezoneSyncEnabled: false,
+  localeSyncEnabled: false,
+  /*
+   * 语言同步默认关，与时区不同的待遇 —— 理由写在 `Settings` 的字段注释里：
+   * 时区修的是一个真实的矛盾，语言是把一项本来不矛盾的东西改掉。
+   *
+   * 预填 chatgpt.com 而不是留空：这个功能的需求就来自「代理到海外节点后
+   * ChatGPT 那边对不上」，留空会让每个新用户第一次打开都看到一个空清单
+   * 和一句不知道填什么的提示。留一个能直接用的值，不想要的人删掉即可。
+   */
+  timezoneHosts: Object.freeze(['chatgpt.com']),
 })
 
 /**
@@ -183,7 +199,127 @@ export const STORAGE_KEYS = Object.freeze({
   settings: 'lostproxy.settings',
   enabled: 'lostproxy.enabled',
   lastError: 'lostproxy.lastError',
+  /**
+   * 时区快照（V0.9）。
+   *
+   * 与 lastError 同样需要持久化，但理由不同：这一个是**省钱**而不是防丢。
+   * 一次探测要经代理走一个真实请求，而 Service Worker 空闲几十秒就会被回收；
+   * 不落盘的话，每次唤醒后的第一次导航都要重新探测一遍。
+   */
+  timezone: 'lostproxy.timezone',
+  /**
+   * 节点名 → 曾经探测到的地理信息（V0.8.0）。
+   *
+   * 换回一个用过的节点时直接复用上次的结果，一次请求都不发。
+   * 顺带缓解限流：免费地理服务按请求方 IP 计数，而我们的出口是共享的
+   * 节点 IP —— 撞日限额是必然，不是概率。
+   */
+  zoneCache: 'lostproxy.zoneCache',
 })
+
+/**
+ * 时区探测的目标服务（V0.9），**按顺序降级**。
+ *
+ * 选这两个的理由：
+ *   - 响应里**直接给 IANA 时区名**（`"timezone": "Asia/Tokyo"`），
+ *     不需要我们拿经纬度去反查时区表 —— 那需要打包一份 tz 数据库；
+ *   - 免注册、无 key，响应体小；
+ *   - `https://`，不额外泄漏到明文链路。
+ *
+ * 🔴 **为什么要两个而不是一个。** 这类免费服务按**请求方 IP** 限流，
+ *    而我们的请求是从代理节点出去的 —— 节点 IP 由所有用户共享。
+ *    在热门节点上撞到日限额不是小概率事件，是**一定**会发生的。
+ *    只有一个源时，撞上的表现是「时区同步突然不动了」，且没有任何自愈路径。
+ *
+ * ⚠️ 两个请求**都必须经代理发出**，否则测到的是本机出口、得到的是用户
+ *    真实时区 —— 那等于这个功能什么都没做，而且**更糟**：它会把本机时区
+ *    当成正确答案注入页面，覆盖掉本来还对的旧值。`direct` 模式下我们
+ *    根本不探测。
+ *
+ * ⚠️ 代价必须让用户知道：这两个域名会看到你的出口 IP。README 与设置页
+ *    都写明，且该功能默认关闭。
+ */
+export const TIMEZONE_PROBE_URLS: readonly string[] = Object.freeze([
+  'https://ipinfo.io/json',
+  // 备用源。字段同为 timezone，响应体略大但格式稳定。
+  'https://ipapi.co/json/',
+])
+
+/**
+ * 探测域名，用于**强制它们走代理**。
+ *
+ * 🔴 为什么需要这一条：直连清单是用户自己填的，而"让这个域名直连"是一个
+ *    完全合理的诉求（有人会把 `*.io` 加进去，或者单独放行 `ipinfo.io`）。
+ *    一旦命中，探测就从本机发出 —— 测到的是用户自己的时区，而功能看起来
+ *    一切正常。这是本项目最坏的失败形态：静默、且结果看起来是正确的。
+ *
+ *    Firefox 那边同理：`proxy.onRequest` 里 `shouldBypassProxy` 命中就会
+ *    返回 `{ type: 'direct' }`。
+ *
+ *    所以两个平台的路由判断都要在**用户规则之前**先看一眼这张表。
+ *
+ * ⚠️ 与 `TIMEZONE_PROBE_URLS` 的一致性由 `tests/timezone.test.ts` 的一条
+ *    断言守着 —— 两处分开写是为了让这份清单可以出现在 PAC 脚本里，
+ *    而那里只能放纯数据。
+ */
+export const TIMEZONE_PROBE_HOSTS: readonly string[] = Object.freeze([
+  'ipinfo.io',
+  'ipapi.co',
+])
+
+/**
+ * 单个探测源的超时，毫秒。
+ *
+ * 比单源时代收紧（原 5000）：现在最坏要等 `源数 × 超时`，而这条路径在
+ * 快照过期时会被页面加载撞上。7 秒已经是"这次注入多半赶不上"的时长，
+ * 再长只是让页面等一个注定迟到的结果。
+ */
+export const TIMEZONE_PROBE_TIMEOUT_MS = 3500
+
+/**
+ * 时区快照的保鲜期，毫秒。
+ *
+ * 10 分钟的取舍：这个值同时决定两件事 ——
+ *
+ *   1. **多久会重新探测一次**。节点在外部客户端里被切换时，我们收不到
+ *      任何通知，只能等它过期；太长会让「换了节点、时区没跟上」持续很久。
+ *   2. **页面加载要等多久**。快照有效时注入走的是零请求的快路径；
+ *      过期则要读一次 Controller 再发一次探测，那一段会推迟注入
+ *      （见 `handleTabLoading` 的说明）。太短会让每次导航都变慢。
+ *
+ * 10 分钟是个折中：一天里普通用户最多多出几十次探测，而换节点后
+ * 最坏等 10 分钟 —— 期间点一下设置页的「立即探测」即可立即纠正。
+ */
+/**
+ * 节点缓存的条数上限。
+ *
+ * 24 条大致覆盖"常去的几个地区 × 几个节点"。超过就按探测时间淘汰最旧的 ——
+ * 缓存是**加速手段**，不是数据，没有理由为它做复杂的淘汰策略。
+ */
+export const ZONE_CACHE_MAX_ENTRIES = 24
+
+/**
+ * 缓存条的保鲜期，24 小时。
+ *
+ * 为什么需要它：同一个节点名不代表同一个落地 IP —— 机场可能换机器、
+ * 换线路，而节点名照旧。一天之后重新测一次是"宁可多一次请求"的选择；
+ * 而在这之内复用，省下的正是限流风险最高的那部分请求。
+ */
+export const ZONE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+
+export const TIMEZONE_SNAPSHOT_TTL_MS = 10 * 60 * 1000
+
+/**
+ * 注入域名清单的条数上限。
+ *
+ * 与 RULE_MAX_COUNT 相比刻意小得多：每一条都会变成一次
+ * `chrome.permissions.request` 里的 origin，并向浏览器登记一个
+ * host permission。几百条不是"慢"，是让授权弹窗本身不可读。
+ */
+export const TIMEZONE_HOST_MAX = 20
+
+/** 单个注入域名的长度上限（RFC 1035 全限定域名上限 + 余量）。 */
+export const TIMEZONE_HOST_MAX_LENGTH = 260
 
 /**
  * 必须绕过代理的本机地址。

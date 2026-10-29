@@ -24,6 +24,7 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { createContext, runInContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 import { platform } from '../src/background/platform'
 import { PROXY_BYPASS_LIST } from '../src/background/platform/chromium'
@@ -337,24 +338,96 @@ describe('🔴🔴 构建产物里不得混入另一个平台的代码', () => {
     }
   })
 
-  it.skipIf(!built)('🔴 授权 UI 只进 Firefox 的页面产物', () => {
+  it.skipIf(!built)('🔴 Chromium 的页面产物不索取全站权限', () => {
     /*
-     * 索权代码在 `options/options.ts` 里，由 `__LOSTPROXY_PLATFORM__`
-     * 包着。Chromium 那趟构建里它应当被完全消除 ——
-     * 一个 Chromium 用户的产物里不该出现 `<all_urls>` 这种字符串，
-     * 哪怕只是死代码：任何审计这个扩展的人（AMO 审核、
-     * 或一个谨慎的用户）看到它都会合理地要求解释。
+     * 这条原先叫「授权 UI 只进 Firefox」，断言的是 Chromium 产物里连
+     * `permissions.request` 都不许出现。
+     *
+     * **V0.9 之后那半句不再成立，而且不该成立**：时区同步在两个平台上
+     * 都需要向浏览器索取目标站点的权限（Chrome 与 Firefox 都要求用户手势），
+     * 所以 Chromium 的 options.js 里合法地出现了 `permissions.request`。
+     *
+     * 但**要守的东西没变**，只是说法更准了：Chromium 索取的必须是用户
+     * 列出的具体站点（`*://*.chatgpt.com/*`），不能是 `<all_urls>`。
+     * 前者用户看得懂，后者是一句"读取和更改所有网站上的数据"。
+     *
+     * 保留 `<all_urls>` 这条断言的理由还有一层：它让「Chromium 的页面
+     * 产物里为什么没有全站权限」成为一个每次构建都会验一遍的事实，
+     * 而不是一段只存在于注释里的承诺。
+     *
+     * Firefox 那边仍然必须有 `<all_urls>` —— 它的智能分流走
+     * `proxy.onRequest`，那个 API 要求过滤器是主机权限的子集。
      */
     const chromiumOptions = resolve(ROOT, 'dist', 'options.js')
     const firefoxOptions = resolve(ROOT, 'dist-firefox', 'options.js')
     if (!existsSync(chromiumOptions) || !existsSync(firefoxOptions)) return
 
     expect(read(chromiumOptions)).not.toContain('<all_urls>')
-    expect(read(chromiumOptions)).not.toContain('permissions.request')
 
     // 反向：Firefox 那边必须真的有，否则这条测试只是在验"两边都没有"。
     expect(read(firefoxOptions)).toContain('<all_urls>')
     expect(read(firefoxOptions)).toContain('permissions.request')
+  })
+
+  it.skipIf(!built)('🔴 打包后的时区注入函数仍能独立运行', () => {
+    /*
+     * `src` 级的自包含由 `timezone-inject.test.ts` 守着。这一条守的是
+     * **打包之后**的那份：
+     *
+     * 源码里自包含，不等于产物里也自包含。minify 会重命名标识符
+     * （产物里是 `func:Ae`），也可能把共用的表达式提成一个模块级
+     * 变量或 helper —— 一旦函数体开始引用模板块里的东西，
+     * `executeScript` 在页面上就会 `ReferenceError`，而浏览器**不报错**、
+     * 页面只是静默地退回真实时区。
+     *
+     * 做法：从产物里抠出那个函数，在一个干净的 vm 上下文里跑一遍。
+     * 能跑出正确偏移，就说明它在页面里也能跑。
+     */
+    const extractFunction = (source: string, start: number): string => {
+      // 从函数开头扫到花括号配平为止。产物里的字符串字面量不含 `{`/`}`，
+      // 所以朴素的计数在这里是安全的；真要更严的判断时该换断言方式。
+      let depth = 0
+      const open = source.indexOf('{', start)
+      for (let i = open; i < source.length; i++) {
+        if (source[i] === '{') depth++
+        else if (source[i] === '}') {
+          depth--
+          if (depth === 0) return source.slice(start, i + 1)
+        }
+      }
+      throw new Error('unbalanced braces')
+    }
+
+    for (const path of [chromiumBundle, firefoxBundle]) {
+      const bundle = read(path)
+
+      // executeScript({ func }) 在产物里长这样：`func:Ae`。
+      const match = /func:([A-Za-z_$][\w$]*)/.exec(bundle)
+      expect(match, `${path} 里找不到 func: 引用`).not.toBeNull()
+      const name = String(match?.[1])
+
+      const start = bundle.indexOf(`function ${name}(`)
+      expect(start, `${path} 里找不到 ${name} 的定义`).toBeGreaterThan(-1)
+
+      const source = extractFunction(bundle, start)
+      const context = createContext({})
+      const install = runInContext(`(${source})`, context) as (profile: {
+        zone: string
+        locale: string | null
+      }) => void
+
+      install({ zone: 'Asia/Tokyo', locale: 'en-US' })
+      expect(runInContext('new Date(0).getTimezoneOffset()', context), path).toBe(-540)
+      /*
+       * 语言也要在产物上验一遍。它是同一个函数里的另一段逻辑，
+       * 一样可能被 minify 打断（比如某个标识符被重命名成与外部同名的变量）。
+       * 只验时区的话，这一半坏掉不会有任何提示。
+       */
+      expect(
+        runInContext('new Intl.DateTimeFormat().resolvedOptions().locale', context),
+        path,
+      ).toBe('en-US')
+    }
   })
 
   it.skipIf(!built)('两个产物都仍是零 import 的单文件（MV3 约束）', () => {

@@ -17,17 +17,21 @@ import {
   ALERT_STALE_AFTER_MS,
   CONTROLLER_PORT_CANDIDATES,
   NON_PROTOCOL_TYPES,
+  TIMEZONE_SNAPSHOT_TTL_MS,
 } from '../shared/constants'
 import { errors, isSelfHealing } from '../shared/errors'
+import { localeForCountry } from '../shared/locales'
 import type { Request, Response, ResponsePayloads } from '../shared/messages'
 import type {
   CoreStatus,
+  SelfCheckStep,
   GroupView,
   NodeMeta,
   NormalizedError,
   ProxyGroup,
   Settings,
   StatusSnapshot,
+  TimezoneSnapshot,
 } from '../shared/types'
 import {
   getConnections,
@@ -42,6 +46,7 @@ import {
   type ProbeResult,
 } from './mihomo'
 import { inspectWebRtcPolicy, syncWebRtcLock } from './privacy'
+import { syncHeaderRules } from './netrule'
 import {
   checkSupported,
   disableProxy,
@@ -59,6 +64,58 @@ import {
   setLastError,
   toSettingsView,
 } from './storage'
+import {
+  failedSnapshot,
+  getTimezoneSnapshot,
+  findOpenTab,
+  hasInjectionPermission,
+  injectIdentityInto,
+  isSnapshotStale,
+  lookupCachedZone,
+  matchesHost,
+  probeExitZone,
+  profileFrom,
+  readPageIdentity,
+  reinjectOpenTabs,
+  rememberZone,
+  setTimezoneSnapshot,
+} from './timezone'
+
+/**
+ * 把 `Accept-Language` 规则对齐到当前状态，返回**实际可用的** locale。
+ *
+ * ## 为什么返回值可能与快照里的 locale 不同
+ *
+ * 请求头规则建不起来时（权限被拒、DNR 不受支持），这里返回 null，
+ * 调用方据此只注入时区、不注入语言。这是刻意的降级：一个「头说中文、
+ * JS 说英文」的页面比原样不动更容易被识别，而只改时区至少是自洽的。
+ *
+ * ## 为什么"不该有规则"也走这里
+ *
+ * 关掉功能、关掉代理、清空清单、国家查不到 —— 四种情况的目标状态都是
+ * "没有任何规则"，而它们分散在四条代码路径上。统一从这一个函数出去，
+ * 就不必在每处各写一遍清理逻辑（写漏一处，用户关了功能而请求头
+ * 还在被改，且不会自己恢复）。
+ */
+async function alignHeaders(
+  settings: Settings,
+  enabled: boolean,
+  snapshot: TimezoneSnapshot | null,
+): Promise<string | null> {
+  const locale = snapshot?.locale ?? null
+  const active =
+    enabled &&
+    settings.timezoneSyncEnabled &&
+    settings.localeSyncEnabled &&
+    settings.timezoneHosts.length > 0 &&
+    locale !== null
+
+  const ok = await syncHeaderRules(
+    active && locale !== null ? { hosts: settings.timezoneHosts, locale } : null,
+  )
+
+  return ok && active ? locale : null
+}
 
 // ---------------------------------------------------------------------------
 // 状态一致性校准
@@ -77,9 +134,21 @@ import {
  */
 export async function reconcile(): Promise<void> {
   const enabled = await getEnabledState()
+  const settings = await getSettings()
+
+  /*
+   * 🔴 请求头规则要在 `enabled` 判断**之前**对齐，而且代理关着时也要走。
+   *
+   * 原因是规则的生命周期比 Service Worker 长：它存在浏览器里，SW 被回收、
+   * 浏览器重启都不会消失。如果只在"代理开着"的分支里对齐，那么用户
+   * 关掉代理（或关掉时区同步）之后，只要那次清理没跑成，规则就会一直
+   * 留在浏览器里改请求头 —— 而 UI 显示功能已关闭，没有任何地方能看出
+   * 这个矛盾。这里传 `enabled` 让 `alignHeaders` 自己算出该不该有规则。
+   */
+  await alignHeaders(settings, enabled, await getTimezoneSnapshot())
+
   if (!enabled) return
 
-  const settings = await getSettings()
   const inspection = await inspectProxy(settings)
 
   // 已经一致，或者浏览器层面根本不让我们写 —— 两种情况都不该动手。
@@ -213,13 +282,21 @@ export async function collectStatus(): Promise<StatusSnapshot> {
    * 延迟与协议都是装饰性信息，取不到应该表现为"不显示这两样"，
    * 而不该让整个节点列表变成错误页。
    */
-  const [inspection, probe, webRtc, persisted, groupsResult, nodeMeta] = await Promise.all([
+  const [inspection, probe, webRtc, persisted, groupsResult, nodeMeta, timezone] = await Promise.all([
     inspectProxy(settings),
     getVersion(settings),
     inspectWebRtcPolicy(),
     getLastError(),
     getGroups(settings),
     getNodeMeta(settings),
+    /*
+     * V0.9：只在功能启用时读快照。
+     *
+     * 未启用的用户不该看到一个「尚未探测」的空状态 —— 那会让一个
+     * 他从未开过的功能在 Popup 上留下一条永远同步不上的提示。
+     * `null` 在这里的含义是「这个功能没有参与本次快照」。
+     */
+    settings.timezoneSyncEnabled ? getTimezoneSnapshot() : Promise.resolve(null),
   ])
 
   /*
@@ -243,6 +320,7 @@ export async function collectStatus(): Promise<StatusSnapshot> {
     lastError: pickError(persisted, enabled, inspection, probe),
     group,
     groupError,
+    timezone,
   }
 }
 
@@ -344,6 +422,12 @@ export async function handleEnable(): Promise<Response<StatusSnapshot>> {
 
   await setEnabledState(true)
   await syncWebRtcLock(true, settings.webRtcLockEnabled)
+  /*
+   * 补回请求头规则。关闭代理时它们被清掉了，而快照里的 locale 还在 ——
+   * 不同步的话，重新开启后会得到一个"时区改了、语言没改"的页面，
+   * 而这正是 `alignHeaders` 存在的意义所要避免的组合。
+   */
+  await alignHeaders(settings, true, await getTimezoneSnapshot())
   // 新的一次开启 —— 上一轮的运行时告警不再相关。
   await setLastError(null)
 
@@ -361,6 +445,15 @@ export async function handleDisable(): Promise<Response<StatusSnapshot>> {
   await setEnabledState(false)
   const settings = await getSettings()
   await syncWebRtcLock(false, settings.webRtcLockEnabled)
+  /*
+   * 🔴 代理一关，请求头规则必须跟着撤掉。
+   *
+   * 页面侧不再注入（`handleTabLoading` 里查了 enabled），如果规则留着，
+   * 就会出现「时区是本地的、`Accept-Language` 却是英文」—— 一个自相矛盾
+   * 且比原样不动更显眼的组合。而它不会自己恢复：规则是持久化的，
+   * 只有代码主动清才会消失。
+   */
+  await alignHeaders(settings, false, null)
   await setLastError(null)
 
   return { ok: true, data: await collectStatus() }
@@ -471,6 +564,18 @@ export async function handleSaveSettings(
     }
   }
   await syncWebRtcLock(enabled, result.value.webRtcLockEnabled)
+
+  /*
+   * 清单或开关变了，请求头规则要跟着重算。
+   *
+   * 用 `result.value`（已经落盘的那份）而不是 `before`：用户删掉的域名
+   * 若按旧值计算，对应的规则会留在浏览器里继续改那个站点的请求头。
+   *
+   * 关掉「跟随代理出口」也走这里 —— `alignHeaders` 会算出"不该有规则"
+   * 并清掉。这一条比它看起来重要：规则的寿命比页面长，用户关掉功能后
+   * 若无代码主动清除，它会一直生效到扩展被卸载。
+   */
+  await alignHeaders(result.value, enabled, await getTimezoneSnapshot())
 
   return { ok: true, data: toSettingsView(result.value) }
 }
@@ -621,6 +726,326 @@ export async function handleListConnections(): Promise<
     : { ok: false, error: result.error }
 }
 
+/**
+ * 读当前主策略组选中的节点名。
+ *
+ * 读不到一律返回 null：没配组、Controller 不可达（ADR-23 的 named pipe
+ * 用法）、组被删了 —— 这三种情况下「节点名」都不存在，而调用方
+ * （写入时区快照）只需要一个可选的标签，不需要知道为什么没有。
+ */
+async function currentNodeName(settings: Settings): Promise<string | null> {
+  if (settings.primaryGroup.length === 0) return null
+
+  const result = await getGroups(settings)
+  if (!result.ok) return null
+
+  const found = result.groups.find((group) => group.name === settings.primaryGroup)
+  return found !== undefined && found.now !== null ? found.now : null
+}
+
+/**
+ * V0.9：探测出口时区并重新注入已打开的标签页。
+ *
+ * 只在用户显式点「立即探测」时走到这里。代理**必须**是开着的：
+ * 关着时请求走直连，测到的是用户本机时区 —— 那不但没用，还会把一个
+ * 错误的时区当成正确答案注入页面，症状是「同步了但同步错了」。
+ *
+ * ⚠️ 失败**不写 `lastError`**。这是一次操作的失败，不是代理层的安全事件；
+ *    写进去会挤进 `pickError` 的最高优先级，顶掉一条可能尚未确认的
+ *    泄漏告警（与 SELECT_NODE / UPDATE_PROVIDER 同一条纪律）。
+ */
+export async function handleSyncTimezone(): Promise<Response<ResponsePayloads['SYNC_TIMEZONE']>> {
+  const settings = await getSettings()
+
+  const enabled = await getEnabledState()
+  if (!enabled) return { ok: false, error: errors.timezoneProxyOff() }
+
+  /*
+   * 清单为空时**直接拒绝**：不探测、不写快照。
+   *
+   * 否则会发生一件很难查的事 —— 探测成功、快照写入、popup 上出现一个
+   * 漂亮的时区名，而 `reinjectOpenTabs([])` 一个站点都没碰。用户看到
+   * 「已同步」，刷新页面却毫无变化，而"功能正常"与"什么都没做"在他的
+   * 观察里完全一样。
+   *
+   * 🔴 这条判定放在消息入口，不靠 UI 禁用按钮。UI 是便利，不是防线 ——
+   *    与端口校验、直连规则校验同一条纪律：防线在唯一的写入路径上。
+   */
+  if (settings.timezoneHosts.length === 0) return { ok: false, error: errors.timezoneNoHosts() }
+
+  const probe = await probeExitZone()
+  if (!probe.ok) {
+    /*
+     * 失败也要落盘：页面加载那条路径上的探测是静默的，这里是唯一
+     * 能留下"为什么没同步上"的地方。同时刷新 `at` 形成退避，
+     * 免得每次导航都去撞同一个 429。
+     */
+    await setTimezoneSnapshot(failedSnapshot(await getTimezoneSnapshot(), probe.error, null))
+    return { ok: false, error: probe.error }
+  }
+
+  const snapshot: TimezoneSnapshot = {
+    zone: probe.zone,
+    country: probe.country,
+    locale: localeForCountry(probe.country),
+    exitIp: probe.exitIp,
+    at: Date.now(),
+    node: await currentNodeName(settings),
+    error: null,
+  }
+  await setTimezoneSnapshot(snapshot)
+
+  /*
+   * 先对齐请求头、再注入页面。顺序不能反：
+   * `alignHeaders` 的返回值决定页面里要不要改语言 —— 规则没建起来时
+   * 它返回 null，页面侧就只改时区。反过来先注入的话，会有一个短暂窗口
+   * 是"JS 说英文、请求头说中文"，而那正是最容易被识别的组合。
+   */
+  const locale = await alignHeaders(settings, true, snapshot)
+
+  /*
+   * 补注入已打开的标签页：这些页面不会再触发 tabs.onUpdated，
+   * 而用户刚点了「探测」，期待的是"现在就生效"。
+   */
+  await reinjectOpenTabs(settings.timezoneHosts, { zone: probe.zone, locale })
+
+  return { ok: true, data: { timezone: snapshot } }
+}
+
+/**
+ * V0.8.0：自检 —— 逐项回答"为什么没生效"。
+ *
+ * ## 为什么需要它
+ *
+ * 这个功能的每一种失败都是**静默**的：不报错、不弹窗，页面照常打开，
+ * 只是时区没变。在此之前，唯一的排查方式是在目标页面的控制台手敲
+ * 几行代码 —— 那等于说"只有懂的人才能用它"。
+ *
+ * ## 为什么要实测而不是只看配置
+ *
+ * 配置全对而页面没生效，是最常见的情况（改完设置没刷新页面）。
+ * 只看配置的话，自检会给出一个"一切正常"的结论 —— 那比不检查更糟。
+ */
+export async function handleSelfCheck(): Promise<Response<ResponsePayloads['SELF_CHECK']>> {
+  const settings = await getSettings()
+  const steps: SelfCheckStep[] = []
+
+  const featureOn = settings.timezoneSyncEnabled
+  steps.push({ key: featureOn ? 'check.featureOn' : 'check.featureOff', ok: featureOn })
+
+  const hostsFilled = settings.timezoneHosts.length > 0
+  steps.push({ key: hostsFilled ? 'check.hostsFilled' : 'check.hostsEmpty', ok: hostsFilled })
+
+  const target = await findOpenTab(settings.timezoneHosts)
+  if (target === null || target.id === undefined || target.url === undefined) {
+    steps.push({ key: 'check.noTarget', ok: false })
+    return { ok: true, data: { url: null, steps, observed: null } }
+  }
+
+  let host = ''
+  try {
+    host = new URL(target.url).hostname
+  } catch {
+    // 走到这里说明 tabs 给了个解析不了的 url，当作没匹配上。
+  }
+  steps.push({ key: 'check.hostMatched', ok: true, params: { host } })
+
+  const permitted = await hasInjectionPermission([host])
+  steps.push({ key: permitted ? 'check.permitted' : 'check.notPermitted', ok: permitted })
+
+  const proxyOn = await getEnabledState()
+  steps.push({ key: proxyOn ? 'check.proxyOn' : 'check.proxyOff', ok: proxyOn })
+
+  /*
+   * 实测放在最后 —— 前面任何一步失败，读页面都只是多一次尝试，
+   * 但把"读不到"也当成一条结论报出来，比省略它更有用。
+   */
+  const observed = permitted ? await readPageIdentity(target.id) : null
+
+  if (observed === null) {
+    steps.push({ key: 'check.unreadable', ok: false })
+  } else {
+    const expected = (await getTimezoneSnapshot())?.zone ?? null
+    if (expected !== null) {
+      const match = observed.timezone === expected
+      steps.push({
+        key: match ? 'check.applied' : 'check.needsReload',
+        ok: match,
+        /*
+         * 带上两边的值：只说"没生效"用户不知道该做什么，而
+         * "页面是 Asia/Shanghai，应为 America/Los_Angeles"直接指向了
+         * 那个动作 —— 刷新。
+         */
+        params: { actual: observed.timezone, expected },
+      })
+    }
+  }
+
+  return { ok: true, data: { url: target.url, steps, observed } }
+}
+
+/**
+ * V0.9：页面开始导航时决定要不要注入时区。
+ *
+ * ## 为什么这条路要分快慢两段
+ *
+ * 注入必须赶在页面自己的脚本之前 —— 一旦页面先跑了，它读到的就是真实
+ * 时区，而事后修补改不了已经创建的对象。所以这条路径上**不能有慢操作**。
+ *
+ * 快路径：快照有效 → 直接注入，零额外请求。
+ * 慢路径：快照过期 → 读节点 + 探测 + 注入，可能花上几秒，
+ *         此时注入大概率已经晚了，但下次导航就回到快路径。
+ *
+ * 慢路径失败时**静默返回**，不抛也不写告警：一次探测失败不该让
+ * 用户正在打开的页面多出一条与当前动作无关的红色提示。他要看结果，
+ * 到设置页看那一行「当前探测到」就够了。
+ */
+export async function handleTabLoading(tabId: number, url: string | undefined): Promise<void> {
+  if (url === undefined) return
+
+  const settings = await getSettings()
+  if (!settings.timezoneSyncEnabled) return
+  if (!matchesHost(url, settings.timezoneHosts)) return
+
+  // 代理关着时注入没有意义：页面本来就是从真实位置出去的。
+  const enabled = await getEnabledState()
+  if (!enabled) return
+
+  const snapshot = await getTimezoneSnapshot()
+  const profile = profileFrom(snapshot, settings.localeSyncEnabled)
+
+  /*
+   * 🔴 有值就先注入，**不管它是否过期**。
+   *
+   * 这条路径的全部意义是赶在页面脚本之前完成写入，而一次探测最长要 7 秒
+   * （两个源各 3.5 秒）。等到它回来，页面早就跑完了 —— 那时注入进去的
+   * 只是一个已经没人读的值。旧实现在快照过期时先探测再注入，等于每过
+   * 一个 TTL 就有一次注入注定失败。
+   *
+   * 代价：可能注入一个过期的时区（用户刚在别的客户端换了节点）。但这个
+   * 代价比"不注入"低 —— 不注入意味着页面拿到真实时区，与已经变了的 IP
+   * 组合同样矛盾，而且用户会以为功能坏了。过期值最多错到下一次后台刷新
+   * 完成（几秒），下一次导航就是对的。
+   *
+   * 快路径直接用快照里的 locale，不再查一次 DNR 规则。这是一条不变式：
+   * **规则状态与快照一致**，由所有写路径维护（探测成功后 `alignHeaders`、
+   * 开关代理时、保存设置时、SW 启动时）。在这里补一次 `getDynamicRules()`
+   * 会多一次异步往返，而这条路径慢一步，注入就白做了。
+   */
+  if (profile !== null) {
+    await injectIdentityInto(tabId, profile)
+
+    if (isSnapshotStale(snapshot, TIMEZONE_SNAPSHOT_TTL_MS)) {
+      // 不 await：注入已经完成，这条路径余下的时间属于页面。
+      void refreshTimezoneInBackground(settings)
+    }
+    return
+  }
+
+  // 完全没有时区（首次使用，或从未探测成功）—— 只能先探测。
+  // 这一次多半迟到，但结果是下一次导航能用上快路径。
+  const fresh = await probeAndStore(settings, snapshot)
+  if (fresh === null || fresh.zone === null) return
+
+  const locale = await alignHeaders(settings, true, fresh)
+  await injectIdentityInto(tabId, { zone: fresh.zone, locale })
+}
+
+/**
+ * 探测一次并落盘。失败时把原因写进快照（退避 + 留痕），返回 null。
+ *
+ * 抽出来是因为两条路径都要它：页面加载时补探测、以及后台刷新。
+ * 两处各写一遍的话，"失败时刷新 `at` 形成退避"这条很容易只在一处生效 ——
+ * 而漏掉它的表现是每次导航都重试一次，撞上 429 时越失败越狠。
+ */
+async function probeAndStore(
+  settings: Settings,
+  previous: TimezoneSnapshot | null,
+): Promise<TimezoneSnapshot | null> {
+  /*
+   * 节点名在探测**之前**读，因为它是查缓存的钥匙。
+   *
+   * 顺带修掉了一处顺序问题：旧实现是探测完才去读节点名，于是 snapshot
+   * 里记的节点是"探测完成那一刻"的节点 —— 如果用户在这几秒里切了节点，
+   * 存下来的组合就是错的。先读一次代价相同，语义更准。
+   *
+   * ⚠️ 读节点名要打一次 Controller 请求，客户端只用 named pipe 时可能
+   *    3 秒超时（ADR-23）。这条路只在后台刷新与手动探测上，不在导航
+   *    路径上热路径 —— 但仍比一次真探测（最长 7 秒）便宜。
+   */
+  const node = await currentNodeName(settings)
+
+  /*
+   * 缓存命中就**一次请求都不发**。
+   *
+   * 这是这个功能对限流唯一的实质缓解：免费地理服务按请求方 IP 计数，
+   * 而出口是共享的节点 IP —— 热门节点上撞日限额是必然。换回一个
+   * 用过的节点时能省下的正是这类请求。
+   */
+  if (node !== null) {
+    const cached = await lookupCachedZone(node)
+    if (cached !== null) {
+      const restored: TimezoneSnapshot = {
+        zone: cached.zone,
+        country: cached.country,
+        locale: cached.locale,
+        exitIp: cached.exitIp,
+        // 快照的 `at` 是"这次拿到值的时间"，不是"真正探测的时间" ——
+        // 用后者会让快照立刻显得过期，于是每次导航都去查一遍缓存。
+        at: Date.now(),
+        node,
+        error: null,
+      }
+      await setTimezoneSnapshot(restored)
+      return restored
+    }
+  }
+
+  const probe = await probeExitZone()
+  if (!probe.ok) {
+    await setTimezoneSnapshot(failedSnapshot(previous, probe.error, node))
+    return null
+  }
+
+  const locale = localeForCountry(probe.country)
+  const fresh: TimezoneSnapshot = {
+    zone: probe.zone,
+    country: probe.country,
+    locale,
+    exitIp: probe.exitIp,
+    at: Date.now(),
+    node,
+    error: null,
+  }
+  await setTimezoneSnapshot(fresh)
+  await rememberZone(node, {
+    zone: probe.zone,
+    country: probe.country,
+    locale,
+    exitIp: probe.exitIp,
+  })
+  return fresh
+}
+
+/**
+ * 页面已经注入完之后，在后台悄悄换掉过期的快照。
+ *
+ * 不 await：调用方的那次导航不该等它。失败也**不产生任何用户可见的后果** ——
+ * 下一次导航会再试一次，而原因已经由 `probeAndStore` 写进快照的 `error`。
+ *
+ * ⚠️ Service Worker 可能在它完成前被回收。这是可以接受的：丢掉的只是
+ *    一次刷新，快照仍然可用（只是仍旧过期），下次导航会重新触发。
+ */
+async function refreshTimezoneInBackground(settings: Settings): Promise<void> {
+  try {
+    const previous = await getTimezoneSnapshot()
+    const fresh = await probeAndStore(settings, previous)
+    if (fresh !== null) await alignHeaders(settings, true, fresh)
+  } catch {
+    // 见上：后台路径的失败不该冒泡到任何地方。
+  }
+}
+
 /** 消息路由。未知消息一律拒绝，不静默忽略。 */
 export async function handleMessage(message: unknown): Promise<Response<unknown>> {
   if (typeof message !== 'object' || message === null || !('type' in message)) {
@@ -657,6 +1082,10 @@ export async function handleMessage(message: unknown): Promise<Response<unknown>
         return await handleProbePort()
       case 'LIST_CONNECTIONS':
         return await handleListConnections()
+      case 'SELF_CHECK':
+        return await handleSelfCheck()
+      case 'SYNC_TIMEZONE':
+        return await handleSyncTimezone()
       default: {
         // 穷举检查：新增消息类型时忘了处理，这里会编译失败。
         const exhaustive: never = request
