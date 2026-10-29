@@ -313,3 +313,27 @@ describe('语言开关（V0.8.0）', () => {
     expect(hint).not.toBeNull()
   })
 })
+
+describe('站点清单的布局（V0.8.0）', () => {
+  it('🔴 用纵向堆叠，而不是两列', () => {
+    /*
+     * `.field` 默认是「132px 标签 + 控件」两列，专为单行输入设计 ——
+     * 标签与输入框顶端对齐，读起来是一条。
+     *
+     * 而 textarea 有几个元素高：标签被 `align-items: center` 摆在左列
+     * 中间，左边空出一大块；它后面的提示与快捷按钮也会各自落进某一列，
+     * 看起来是散的。这条断言守的是"别改回两列"。
+     */
+    const field = document.querySelector('#tz-hosts')?.closest('.field')
+    expect(field?.classList.contains('field--stacked')).toBe(true)
+  })
+
+  it('同卡片的其它字段仍是两列', () => {
+    // 修饰类只该作用于这一个字段 —— 套到全部字段上会把整页拉宽变形。
+    const others = [...document.querySelectorAll('.field')].filter(
+      (node) => !node.classList.contains('field--stacked'),
+    )
+    expect(others.length).toBeGreaterThan(0)
+    expect(document.querySelectorAll('.field--stacked')).toHaveLength(1)
+  })
+})

@@ -407,6 +407,25 @@ h1 {
   margin-bottom: 0;
 }
 
+/* 多行字段改成纵向堆叠（V0.8.0）。
+   默认的 `.field` 是「132px 标签 + 控件」两列，专为单行输入设计：
+   标签与输入框顶端对齐，读起来是一条。而 textarea 有几个元素高，
+   标签被 `align-items: center` 摆在左列中间，左边就空出一大块；
+   它后面的提示与快捷按钮也会各自落进某一列，看起来是散的。
+
+   堆叠之后控件占满宽度，下面的元素依次排开 —— 间距统一由 gap 控制，
+   所以把子元素自带的 margin 归零，避免两套间距叠在一起。 */
+.field--stacked {
+  grid-template-columns: 1fr;
+  align-items: start;
+  gap: 6px;
+}
+
+.field--stacked > .hint,
+.field--stacked > .tz-presets {
+  margin-top: 0;
+}
+
 .field > label {
   font-size: 13px;
   font-weight: 500;
