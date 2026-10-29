@@ -2,6 +2,9 @@
   "name": "lostproxy",
   "version": "0.8.0",
   "private": true,
+  "engines": {
+    "node": ">=22.9.0"
+  },
   "type": "module",
   "description": "Browser-scoped proxy manager for Microsoft Edge (Manifest V3). Routes only this browser through a local Mihomo/Clash core, without touching Windows system proxy, TUN or the routing table.",
   "scripts": {
@@ -12,7 +15,7 @@
     "build:chromium": "vite build && vite build --config vite.config.sw.ts",
     "build:firefox": "vite build --config vite.config.firefox.ts && vite build --config vite.config.firefox.sw.ts",
     "package": "npm run build && node scripts/package.mjs",
-    "sign:firefox": "node scripts/sign-firefox.mjs",
+    "sign:firefox": "node --env-file-if-exists=.env scripts/sign-firefox.mjs",
     "watch": "vite build --watch",
     "watch:sw": "vite build --config vite.config.sw.ts --watch",
     "typecheck": "tsc --noEmit",

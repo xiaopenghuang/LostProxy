@@ -134,8 +134,9 @@ if (missing.length > 0) {
   // 只说缺哪个，不回显任何已有值。
   fail(
     `缺环境变量：${missing.join(', ')}\n\n` +
-      '  到 https://addons.mozilla.org/developers/addon/api/key/ 生成，然后：\n' +
-      '    set -a; . ./.env; set +a\n' +
+      '  到 https://addons.mozilla.org/developers/addon/api/key/ 生成，写进 ./.env。\n' +
+      '  `npm run sign:firefox` 会自动读那个文件（`--env-file-if-exists`）；\n' +
+      '  这条提示出现，说明 .env 不存在、或者里面缺这两个键。\n' +
       '  （.env 已在 .gitignore 里。别把它提交上去，也别贴给任何人。）',
   )
 }
