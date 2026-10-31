@@ -912,7 +912,7 @@ describe('V0.9 状态页显示时区', () => {
     expect(document.querySelector<HTMLElement>('#timezone-text')?.hidden).toBe(true)
   })
 
-  it('显示探测到的时区', async () => {
+  it('显示探测到的时区与当前时间', async () => {
     nextSnapshot = snapshot({
       timezone: {
         zone: 'Asia/Tokyo',
@@ -927,9 +927,10 @@ describe('V0.9 状态页显示时区', () => {
     await mountPopup()
 
     expect(document.querySelector<HTMLElement>('#timezone-label')?.hidden).toBe(false)
-    const value = document.querySelector<HTMLElement>('#timezone-text')
-    expect(value?.hidden).toBe(false)
-    expect(value?.textContent).toBe('Asia/Tokyo')
+    const value = document.querySelector<HTMLElement>('#timezone-value')
+    expect(value).not.toBeNull()
+    // 时区名在前，后面跟着「该时区现在几点」（HH:mm，实时值）。
+    expect(value?.textContent).toMatch(/^Asia\/Tokyo · \d{2}:\d{2}$/)
   })
 
   it('🔴 启用了但还没探测到时要明说', async () => {

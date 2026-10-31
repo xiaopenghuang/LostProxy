@@ -216,3 +216,31 @@ export function languageListFor(locale: string): string[] {
   const primary = primarySubtag(locale)
   return primary === locale ? [locale] : [locale, primary]
 }
+
+/**
+ * 目标时区**现在几点**（墙上时钟时间），按界面语言格式化。
+ *
+ * 与「探测时间」是两回事：那个回答"上次探测发生在什么时候"，这个回答
+ * "这个出口所在地此刻几点"。用户切到一个洛杉矶节点，想知道的是后者。
+ *
+ * 用 `Intl.DateTimeFormat` 按目标时区格式化**当前时刻**：偏移量是引擎
+ * 实时算出来的（含 DST），不写死。所以夏令时切换后它会自动从 02:11
+ * 变成 01:11，不需要任何代码配合。
+ *
+ * @param uiLocale 界面语言（'zh' | 'en' 之类），决定时分怎么排布。
+ * @param zone IANA 时区名，如 `America/Los_Angeles`。
+ * @returns 形如 `02:11` 的字符串；时区名非法（`Intl` 会抛 RangeError）时
+ *   返回空串，让调用方决定省略而不是崩掉整块 UI。
+ */
+export function formatZoneTime(uiLocale: string, zone: string): string {
+  try {
+    return new Intl.DateTimeFormat(uiLocale === 'zh' ? 'zh-CN' : 'en-US', {
+      timeZone: zone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(Date.now())
+  } catch {
+    return ''
+  }
+}

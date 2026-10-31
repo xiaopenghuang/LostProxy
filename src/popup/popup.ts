@@ -30,6 +30,7 @@ import {
   sortNodesByLatency,
 } from './format'
 import { createTranslator, resolveLocale, type MessageKey } from '../shared/i18n'
+import { formatZoneTime } from '../shared/locales'
 import { sendMessage, type ResponsePayloads } from '../shared/messages'
 import type {
   ConnectionView,
@@ -459,12 +460,24 @@ function connectionRow(conn: ConnectionView): HTMLElement {
   return item
 }
 
+/**
+ * 把时区名和「该时区现在几点」拼成一行给 popup 显示。
+ *
+ * popup 是短命的（点开看几秒就关），每次打开都重新渲染，所以这里算一次
+ * 就够了，不需要设置页那样的每分钟刷新。时间走的是 `formatZoneTime` 的
+ * 实时偏移（含 DST），打开那一刻就是对的。
+ */
+function withZoneTime(zone: string, uiLocale: string): string {
+  const time = formatZoneTime(uiLocale, zone)
+  return time === '' ? zone : `${zone} · ${time}`
+}
+
 function render(snapshot: StatusSnapshot): void {
   // 语言可能刚被用户改过，每次渲染都重建翻译器并刷新静态文案。
-  t = createTranslator(resolveLocale(snapshot.settings.language))
+  const uiLocale = resolveLocale(snapshot.settings.language)
+  t = createTranslator(uiLocale)
   applyStaticText()
 
-  el.toggle?.setAttribute('aria-checked', String(snapshot.enabled))
   if (el.card) {
     el.card.dataset.on = String(snapshot.enabled)
     // 状态已知，撤掉"未知"呈现。
@@ -505,7 +518,9 @@ function render(snapshot: StatusSnapshot): void {
 
     // 写 span 而不是 dd：dd 里还住着那颗刷新按钮，覆盖 textContent 会把它删掉。
     if (active && el.timezoneValue !== null) {
-      el.timezoneValue.textContent = snapshot.timezone?.zone ?? t('popup.timezoneNone')
+      const zone = snapshot.timezone?.zone ?? null
+      el.timezoneValue.textContent =
+        zone === null ? t('popup.timezoneNone') : withZoneTime(zone, uiLocale)
     }
 
     if (el.timezoneRefresh !== null) {

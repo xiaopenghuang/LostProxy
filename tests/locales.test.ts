@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import {
   acceptLanguageValue,
   COUNTRY_LOCALE,
+  formatZoneTime,
   isValidLocale,
   languageListFor,
   localeForCountry,
@@ -140,5 +141,34 @@ describe('languageListFor', () => {
     const first = languageListFor('en-US')
     first.push('fr')
     expect(languageListFor('en-US')).toEqual(['en-US', 'en'])
+  })
+})
+
+describe('formatZoneTime', () => {
+  it('🔴 返回 HH:mm 形式的当前时刻', () => {
+    /*
+     * 这是「该时区现在几点」的核心：只给时和分，不写死偏移。
+     * 偏移由 Intl 实时算（含 DST），所以同一天里同一时刻的洛杉矶
+     * 与东京会差出不同的分钟数 —— 那是特性，不是 bug。
+     */
+    const value = formatZoneTime('en', 'Asia/Tokyo')
+    expect(value).toMatch(/^\d{2}:\d{2}$/)
+  })
+
+  it('🔴 非法时区名返回空串而不是抛', () => {
+    /*
+     * `new Intl.DateTimeFormat` 拿到非法时区会抛 RangeError。快照里的
+     * zone 虽然经过 normalizeZone 校验，但旧版本快照可能存着后来不认的值。
+     * 抛出来的话会让整块 UI（设置页状态行 / popup 时区行）崩掉。
+     */
+    expect(formatZoneTime('en', 'Not/AZone')).toBe('')
+  })
+
+  it('同一时刻不同时区给不同时间', () => {
+    // 用两个确定相异的时区，验证它真的按目标时区算，而不是返回本机时间。
+    const tokyo = formatZoneTime('en', 'Asia/Tokyo')
+    const london = formatZoneTime('en', 'Europe/London')
+    // 两地的时差不是 0（东京 UTC+9，伦敦冬令时 UTC+0），分钟数必不同。
+    expect(tokyo).not.toBe(london)
   })
 })

@@ -18,6 +18,7 @@
 
 import { createTranslator, languageLabel, LANGUAGE_OPTIONS, resolveLocale } from '../shared/i18n'
 import type { Language, Locale, MessageKey } from '../shared/i18n'
+import { formatZoneTime } from '../shared/locales'
 import { sendMessage } from '../shared/messages'
 import type {
   ProviderView,
@@ -327,6 +328,17 @@ function renderTimezoneState(): void {
     if (snapshot.node !== null) parts.push(snapshot.node)
     // at 为 0 是旧版本留下的快照，没有可显示的时间。
     if (snapshot.at > 0) parts.push(formatProbedAt(snapshot.at))
+    /*
+     * 该时区现在几点 —— 实时值，每分钟重绘（见 startZoneClock）。
+     *
+     * 与上面那个探测时间是两回事：这是「出口所在地此刻几点」，会随分钟走。
+     * 放在整行最末，因为它是对前面所有项（时区、IP、节点）的一个「落脚点」：
+     * 前面几项都成立之后，最后落到"所以那边现在 12:34"。
+     */
+    const zoneTime = formatZoneTime(locale, snapshot.zone)
+    if (zoneTime !== '') {
+      parts.push(`${t('options.tzLocalTime')} ${zoneTime}`)
+    }
     el.tzStatus.textContent = `${t('options.tzDetected')}: ${parts.join(' · ')}`
   }
 
@@ -335,6 +347,26 @@ function renderTimezoneState(): void {
     el.tzError.hidden = error === null
     el.tzError.textContent = error === null ? '' : t(error.key, error.params)
   }
+}
+
+/**
+ * 每分钟重绘一次时区状态行，让「该时区现在几点」跟着走。
+ *
+ * 设置页不是常驻的，但用户开着它盯着看时，那个 HH:mm 每分钟跳一次才有
+ * 意义 —— 一个不跳的「当前时间」很快就变成说谎的值。
+ *
+ * 只重绘状态行本身，不做任何网络请求、不碰 storage：时间纯本地可算。
+ * interval 只建一次；页面卸载时由浏览器回收，不需要显式清理 —— 设置页
+ * 是独立标签页，卸载即销毁。
+ */
+function startZoneClock(): void {
+  const everyMinute = 60 * 1000
+  // 对准分钟边界启动，而不是「启动后 60s」：这样跳变发生在 :00 附近，读起来自然。
+  const untilNextMinute = everyMinute - (Date.now() % everyMinute)
+  setTimeout(() => {
+    renderTimezoneState()
+    setInterval(renderTimezoneState, everyMinute)
+  }, untilNextMinute)
 }
 
 /**
@@ -1093,5 +1125,8 @@ renderLanguageOptions('auto')
  * 让一个能立刻显示的区块去等它没有道理。
  */
 setupRoutingPermission()
+
+// 时区状态行里的「现在几点」要每分钟跟着走。
+startZoneClock()
 
 void load()
